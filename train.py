@@ -17,6 +17,20 @@ from src.flappy_bird import FlappyBird
 from src.utils import pre_processing
 
 
+# 检查 MPS 是否可用
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+    print("MPS is available !!!")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("CUDA is available !!!")
+else:
+    device = torch.device("cpu")
+    print("CPU used !!!")
+
+# device = torch.device("cpu")
+
+
 def get_args():
     parser = argparse.ArgumentParser(
         """Implementation of Deep Q Network to play Flappy Bird"""
@@ -44,7 +58,7 @@ def get_args():
         default=50000,
         help="Number of epoches between testing phases",
     )
-    parser.add_argument("--log_path", type=str, default="tensorboard")
+    parser.add_argument("--log_path", type=str, default="output")
     parser.add_argument("--saved_path", type=str, default="trained_models")
 
     args = parser.parse_args()
@@ -72,9 +86,9 @@ def train(opt):
         opt.image_size,
     )
     image = torch.from_numpy(image)
-    if torch.cuda.is_available():
-        model.cuda()
-        image = image.cuda()
+
+    model = model.to(device)
+    image = image.to(device)
 
     # 在深度强化学习中，通常使用一个序列帧来描述环境的状态，帮助模型捕捉动态变化。这里假设一开始所有帧都是相同的。
     # image: (84, 84)
@@ -98,7 +112,7 @@ def train(opt):
             action = randint(0, 1)
         else:
 
-            action = torch.argmax(prediction)[0]
+            action = torch.argmax(prediction).item()
 
         next_image, reward, terminal = game_state.next_frame(action)
         next_image = pre_processing(
@@ -107,8 +121,8 @@ def train(opt):
             opt.image_size,
         )
         next_image = torch.from_numpy(next_image)
-        if torch.cuda.is_available():
-            next_image = next_image.cuda()
+
+        next_image = next_image.to(device)
         next_state = torch.cat((state[0, 1:, :, :], next_image))[None, :, :, :]
 
         replay_memory.append([state, action, reward, next_state, terminal])
@@ -132,11 +146,11 @@ def train(opt):
         )
         next_state_batch = torch.cat(tuple(state for state in next_state_batch))
 
-        if torch.cuda.is_available():
-            state_batch = state_batch.cuda()
-            action_batch = action_batch.cuda()
-            reward_batch = reward_batch.cuda()
-            next_state_batch = next_state_batch.cuda()
+        state_batch = state_batch.to(device)
+        action_batch = action_batch.to(device)
+        reward_batch = reward_batch.to(device)
+        next_state_batch = next_state_batch.to(device)
+
         current_prediction_batch = model(state_batch)
         next_prediction_batch = model(next_state_batch)
 
@@ -150,6 +164,7 @@ def train(opt):
         )
 
         q_value = torch.sum(current_prediction_batch * action_batch, dim=1)
+
         optimizer.zero_grad()
         # y_batch = y_batch.detach()
         loss = criterion(q_value, y_batch)
