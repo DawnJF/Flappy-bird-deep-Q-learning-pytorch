@@ -25,3 +25,12 @@ You could find my trained model at **trained_models/flappy_bird**
 * **cv2**
 * **pytorch** 
 * **numpy**
+
+
+
+https://blog.csdn.net/qq_41959920/article/details/116357264?spm=1001.2014.3001.5501
+
+
+https://blog.51cto.com/u_15762365/5614336
+
+https://github.com/nicoboou/flappy-bird-rl
