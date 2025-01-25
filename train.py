@@ -71,6 +71,9 @@ def train(opt):
     else:
         torch.manual_seed(123)
     model = DeepQNetwork()
+    target_model = DeepQNetwork().to(device)  # 定义目标网络
+    target_model.load_state_dict(model.state_dict())  # 初始化目标网络
+
     if os.path.isdir(opt.log_path):
         shutil.rmtree(opt.log_path)
     os.makedirs(opt.log_path)
@@ -97,6 +100,8 @@ def train(opt):
 
     replay_memory = []
     iter = 0
+    target_update_freq = 500  # 每隔 1000 步更新一次目标网络
+
     while iter < opt.num_iters:
         prediction = model(state)[0]
         # Exploration or exploitation
@@ -152,7 +157,8 @@ def train(opt):
         next_state_batch = next_state_batch.to(device)
 
         current_prediction_batch = model(state_batch)
-        next_prediction_batch = model(next_state_batch)
+        with torch.no_grad():  # 不需要梯度
+            next_prediction_batch = target_model(next_state_batch)  # 使用目标网络
 
         y_batch = torch.cat(
             tuple(
@@ -166,10 +172,13 @@ def train(opt):
         q_value = torch.sum(current_prediction_batch * action_batch, dim=1)
 
         optimizer.zero_grad()
-        # y_batch = y_batch.detach()
         loss = criterion(q_value, y_batch)
         loss.backward()
         optimizer.step()
+
+        # 定期更新目标网络
+        if iter % target_update_freq == 0:
+            target_model.load_state_dict(model.state_dict())
 
         state = next_state
         iter += 1
