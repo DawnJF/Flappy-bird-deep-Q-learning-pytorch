@@ -27,7 +27,7 @@ class ActorCritic(nn.Module):
                 nn.init.uniform_(m.weight, -0.01, 0.01)
                 nn.init.constant_(m.bias, 0)
 
-    def pi(self, input, softmax_dim=0):  # (1, 4, 84, 84)
+    def pi(self, input, softmax_dim=1):  # (1, 4, 84, 84)
         output = self.conv1(input)
         output = self.conv2(output)
         output = self.conv3(output)

@@ -7,10 +7,13 @@ from torch.distributions import Categorical
 import torch.multiprocessing as mp
 import time
 
-from ac import ActorCritic
-from flappy_bird import FlappyBird
-from utils import pre_processing
+from src.ac import ActorCritic
+from src.flappy_bird import FlappyBird
+from src.utils import pre_processing
 
+"""
+可以运行的版本，但是貌似会陷入局部最优
+"""
 # Hyperparameters
 n_train_processes = 3
 learning_rate = 0.0002
@@ -40,16 +43,16 @@ def train(global_model, rank):
         )
         image = torch.from_numpy(image)
 
+        state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
+
         while not done:
             s_lst, a_lst, r_lst = [], [], []
             for t in range(update_interval):
 
-                state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
-
-                prob = local_model.pi(state)
+                prob = local_model.pi(state)[0]
                 m = Categorical(prob)
                 a = m.sample().item()
-                image_prime, r, done, info = env.next_frame(a)
+                image_prime, r, done = env.next_frame(a)
                 image_prime = pre_processing(
                     image_prime[: env.screen_width, : int(env.base_y)],
                     image_size,
@@ -57,15 +60,17 @@ def train(global_model, rank):
                 )
                 image_prime = torch.from_numpy(image_prime)
 
-                s_lst.append(image)
+                next_state = torch.cat((state[0, 1:, :, :], image_prime))[None, :, :, :]
+
+                s_lst.append(state)
                 a_lst.append([a])
                 r_lst.append(r)
 
-                image = image_prime
+                state = next_state
                 if done:
                     break
 
-            R = 0.0 if done else local_model.v(image_prime).item()
+            R = 0.0 if done else local_model.v(next_state).item()
             td_target_lst = []
             for reward in r_lst[::-1]:
                 R = gamma * R + reward
@@ -73,7 +78,8 @@ def train(global_model, rank):
             td_target_lst.reverse()
 
             s_batch, a_batch, td_target = (
-                torch.tensor(s_lst, dtype=torch.float),
+                # torch.tensor(s_lst, dtype=torch.float),
+                torch.cat(s_lst),
                 torch.tensor(a_lst),
                 torch.tensor(td_target_lst),
             )
@@ -98,18 +104,37 @@ def train(global_model, rank):
 
 
 def test(global_model):
-    env = gym.make("CartPole-v1")
+    env = FlappyBird()
     score = 0.0
     print_interval = 20
 
+    image, reward, terminal = env.next_frame(0)
+    image = pre_processing(
+        image[: env.screen_width, : int(env.base_y)],
+        image_size,
+        image_size,
+    )
+    image = torch.from_numpy(image)
+
+    state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
+
     for n_epi in range(max_test_ep):
         done = False
-        s = env.reset()
+
         while not done:
-            prob = global_model.pi(torch.from_numpy(s).float())
+            prob = global_model.pi(state)[0]
             a = Categorical(prob).sample().item()
-            s_prime, r, done, info = env.step(a)
-            s = s_prime
+            image_prime, r, done = env.next_frame(a)
+
+            image_prime = pre_processing(
+                image_prime[: env.screen_width, : int(env.base_y)],
+                image_size,
+                image_size,
+            )
+            image_prime = torch.from_numpy(image_prime)
+
+            next_state = torch.cat((state[0, 1:, :, :], image_prime))[None, :, :, :]
+            state = next_state
             score += r
 
         if n_epi % print_interval == 0 and n_epi != 0:
@@ -120,7 +145,6 @@ def test(global_model):
             )
             score = 0.0
             time.sleep(1)
-    env.close()
 
 
 if __name__ == "__main__":
