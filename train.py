@@ -42,24 +42,24 @@ def get_args():
         help="The common width and height for all images",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=32, help="The number of images per batch"
+        "--batch_size", type=int, default=24, help="The number of images per batch"
     )
     parser.add_argument(
         "--optimizer", type=str, choices=["sgd", "adam"], default="adam"
     )
     parser.add_argument("--lr", type=float, default=1e-6)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--initial_epsilon", type=float, default=0.1)
+    parser.add_argument("--initial_epsilon", type=float, default=0.2)
     parser.add_argument("--final_epsilon", type=float, default=1e-4)
-    parser.add_argument("--num_iters", type=int, default=2000000)
+    parser.add_argument("--num_iters", type=int, default=1000000)
     parser.add_argument(
         "--replay_memory_size",
         type=int,
-        default=50000,
+        default=5000,
         help="Number of epoches between testing phases",
     )
     parser.add_argument("--log_path", type=str, default="output")
-    parser.add_argument("--saved_path", type=str, default="trained_models")
+    parser.add_argument("--saved_path", type=str, default="trained_models/net_2")
 
     args = parser.parse_args()
     return args
@@ -100,7 +100,7 @@ def train(opt):
 
     replay_memory = []
     iter = 0
-    target_update_freq = 500  # 每隔 1000 步更新一次目标网络
+    target_update_freq = 1000  # 每隔 1000 步更新一次目标网络
 
     while iter < opt.num_iters:
         prediction = model(state)[0]
@@ -114,7 +114,8 @@ def train(opt):
         random_action = u <= epsilon
         if random_action:
             print("Perform a random action")
-            action = randint(0, 1)
+            action = 1 if random() <= 0.1 else 0
+            # action = randint(0, 1)
         else:
 
             action = torch.argmax(prediction).item()
@@ -159,6 +160,7 @@ def train(opt):
         current_prediction_batch = model(state_batch)
         with torch.no_grad():  # 不需要梯度
             next_prediction_batch = target_model(next_state_batch)  # 使用目标网络
+        # next_prediction_batch = model(next_state_batch)
 
         y_batch = torch.cat(
             tuple(
@@ -197,7 +199,7 @@ def train(opt):
         writer.add_scalar("Train/Epsilon", epsilon, iter)
         writer.add_scalar("Train/Reward", reward, iter)
         writer.add_scalar("Train/Q-value", torch.max(prediction), iter)
-        if (iter + 1) % 1000000 == 0:
+        if (iter + 1) % 200000 == 0:
             torch.save(model, "{}/flappy_bird_{}".format(opt.saved_path, iter + 1))
     torch.save(model, "{}/flappy_bird".format(opt.saved_path))
 
