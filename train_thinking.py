@@ -2,7 +2,6 @@
 @author: Viet Nguyen <nhviet1009@gmail.com>
 """
 
-import argparse
 import os
 import shutil
 from random import random, randint, sample
@@ -12,10 +11,9 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 
-from src.deep_q_network import DeepQNetwork
+from src.thinking import Thinking
 from src.flappy_bird import FlappyBird
-from src.utils import get_args, get_device, pre_processing
-
+from src.utils import pre_processing, get_args, get_device
 
 device = get_device()
 
@@ -25,8 +23,8 @@ def train(opt):
         torch.cuda.manual_seed(123)
     else:
         torch.manual_seed(123)
-    model = DeepQNetwork()
-    target_model = DeepQNetwork().to(device)  # 定义目标网络
+    model = Thinking()
+    target_model = Thinking().to(device)  # 定义目标网络
     target_model.load_state_dict(model.state_dict())  # 初始化目标网络
 
     if os.path.isdir(opt.log_path):
@@ -36,6 +34,7 @@ def train(opt):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     criterion = nn.MSELoss()
+    think_criterion = nn.CosineSimilarity(dim=1)
     game_state = FlappyBird()
     image, reward, terminal = game_state.next_frame(0)
     image = pre_processing(
@@ -58,7 +57,8 @@ def train(opt):
     target_update_freq = 1000  # 每隔 1000 步更新一次目标网络
 
     while iter < opt.num_iters:
-        prediction = model(state)[0]
+        prediction, _ = model(state)
+        prediction = prediction[0]
         # Exploration or exploitation
         epsilon = opt.final_epsilon + (
             (opt.num_iters - iter)
@@ -69,7 +69,10 @@ def train(opt):
         random_action = u <= epsilon
         if random_action:
             print("Perform a random action")
-            action = 1 if random() <= 0.1 else 0
+            if random() <= 0.1:
+                action = 1
+            else:
+                action = 0
             # action = randint(0, 1)
         else:
 
@@ -96,12 +99,7 @@ def train(opt):
         )
 
         state_batch = torch.cat(tuple(state for state in state_batch))
-        action_batch = torch.from_numpy(
-            np.array(
-                [[1, 0] if action == 0 else [0, 1] for action in action_batch],
-                dtype=np.float32,
-            )
-        )
+        action_batch = torch.tensor(action_batch)
         reward_batch = torch.from_numpy(
             np.array(reward_batch, dtype=np.float32)[:, None]
         )
@@ -112,10 +110,12 @@ def train(opt):
         reward_batch = reward_batch.to(device)
         next_state_batch = next_state_batch.to(device)
 
-        current_prediction_batch = model(state_batch)
+        current_prediction_batch, predict = model(state_batch, action_batch)
+
         with torch.no_grad():  # 不需要梯度
-            next_prediction_batch = target_model(next_state_batch)  # 使用目标网络
-        # next_prediction_batch = model(next_state_batch)
+            next_prediction_batch, embedding = target_model(
+                next_state_batch
+            )  # 使用目标网络
 
         y_batch = torch.cat(
             tuple(
@@ -126,10 +126,21 @@ def train(opt):
             )
         )
 
+        action_batch = torch.from_numpy(
+            np.array(
+                [[1, 0] if action == 0 else [0, 1] for action in action_batch],
+                dtype=np.float32,
+            )
+        )
+        action_batch = action_batch.to(device)
         q_value = torch.sum(current_prediction_batch * action_batch, dim=1)
 
         optimizer.zero_grad()
-        loss = criterion(q_value, y_batch)
+        thinking_loss = 1 - think_criterion(embedding, predict).mean()
+        mse_loss = criterion(q_value, y_batch)
+
+        loss = mse_loss + thinking_loss
+
         loss.backward()
         optimizer.step()
 
@@ -140,10 +151,12 @@ def train(opt):
         state = next_state
         iter += 1
         print(
-            "Iteration: {}/{}, Action: {}, Loss: {}, Epsilon {}, Reward: {}, Q-value: {}".format(
+            "Iteration: {}/{}, Action: {}, Loss: {}({}, {}), Epsilon {}, Reward: {}, Q-value: {}".format(
                 iter + 1,
                 opt.num_iters,
                 action,
+                mse_loss,
+                thinking_loss,
                 loss,
                 epsilon,
                 reward,
@@ -151,6 +164,8 @@ def train(opt):
             )
         )
         writer.add_scalar("Train/Loss", loss, iter)
+        writer.add_scalar("Train/MSE Loss", mse_loss, iter)
+        writer.add_scalar("Train/Thinking Loss", thinking_loss, iter)
         writer.add_scalar("Train/Epsilon", epsilon, iter)
         writer.add_scalar("Train/Reward", reward, iter)
         writer.add_scalar("Train/Q-value", torch.max(prediction), iter)
@@ -160,5 +175,5 @@ def train(opt):
 
 
 if __name__ == "__main__":
-    opt = get_args("debug")
+    opt = get_args()
     train(opt)

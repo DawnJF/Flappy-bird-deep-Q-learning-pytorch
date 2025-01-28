@@ -4,6 +4,8 @@
 
 import torch.nn as nn
 
+from src.thinking import Thinking
+
 
 class Net1(nn.Module):
     def __init__(self):
@@ -77,10 +79,10 @@ class Net2(nn.Module):
         return output  # (1, 2)
 
 
-class DeepQNetwork(Net1):
+class DeepQNetwork(Thinking):
 
     def __init__(self):
         super().__init__()
 
     def forward(self, x):
-        return super().forward(x)
+        return super().forward(x)[0]
