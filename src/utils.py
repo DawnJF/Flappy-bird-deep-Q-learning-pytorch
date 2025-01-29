@@ -46,17 +46,20 @@ def get_args(tag=None):
         help="Number of epoches between testing phases",
     )
 
+    parser.add_argument("--saved_path", type=str, default="outputs")
+    parser.add_argument("--log_path", type=str, default="outputs")
+
+    args = parser.parse_args()
+
     output = (
         "outputs/"
-        + (tag + "/" if tag else "")
+        + (args.tag + "/" if args.tag else "")
         + time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     )
     os.makedirs(output, exist_ok=True)
     print(f"output: {output}")
-    parser.add_argument("--saved_path", type=str, default=output)
-    parser.add_argument("--log_path", type=str, default=output)
 
-    args = parser.parse_args()
+    args.saved_path = output
     return args
 
 
@@ -75,3 +78,7 @@ def get_device():
 
     # device = torch.device("cpu")
     return device
+
+
+if __name__ == "__main__":
+    opt = get_args()
