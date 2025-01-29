@@ -29,9 +29,6 @@ def train(opt):
     target_model = DeepQNetwork().to(device)  # 定义目标网络
     target_model.load_state_dict(model.state_dict())  # 初始化目标网络
 
-    if os.path.isdir(opt.log_path):
-        shutil.rmtree(opt.log_path)
-    os.makedirs(opt.log_path)
     writer = SummaryWriter(opt.log_path)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)

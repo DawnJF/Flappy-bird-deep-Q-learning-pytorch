@@ -27,9 +27,6 @@ def train(opt):
     target_model = Thinking().to(device)  # 定义目标网络
     target_model.load_state_dict(model.state_dict())  # 初始化目标网络
 
-    if os.path.isdir(opt.log_path):
-        shutil.rmtree(opt.log_path)
-    os.makedirs(opt.log_path)
     writer = SummaryWriter(opt.log_path)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
@@ -69,10 +66,7 @@ def train(opt):
         random_action = u <= epsilon
         if random_action:
             print("Perform a random action")
-            if random() <= 0.1:
-                action = 1
-            else:
-                action = 0
+            action = 1 if random() <= 0.1 else 0
             # action = randint(0, 1)
         else:
 
@@ -137,7 +131,7 @@ def train(opt):
 
         optimizer.zero_grad()
         thinking_loss = 1 - think_criterion(embedding, predict).mean()
-        mse_loss = criterion(q_value, y_batch)
+        mse_loss = criterion(q_value, y_batch) * 20
 
         loss = mse_loss + thinking_loss
 
@@ -155,9 +149,9 @@ def train(opt):
                 iter + 1,
                 opt.num_iters,
                 action,
+                loss,
                 mse_loss,
                 thinking_loss,
-                loss,
                 epsilon,
                 reward,
                 torch.max(prediction),

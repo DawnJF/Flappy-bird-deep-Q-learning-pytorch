@@ -60,6 +60,7 @@ def get_args(tag=None):
     print(f"output: {output}")
 
     args.saved_path = output
+    args.log_path = output
     return args
 
 
