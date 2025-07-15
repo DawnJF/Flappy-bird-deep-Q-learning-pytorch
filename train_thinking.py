@@ -17,21 +17,81 @@ from src.utils import pre_processing, get_args, get_device
 
 device = get_device()
 
+checkpoint_freq = 20000
+max_steps = 216000
+
+
+class ThinkingTrainer:
+    def __init__(self, opt):
+        self.output_path = opt.log_path
+        self.device = get_device()
+        self.model = Thinking().to(self.device)
+
+        self.writer = SummaryWriter(self.output_path)
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=opt.lr)
+        self.criterion = nn.MSELoss()
+        self.think_criterion = nn.CosineSimilarity(dim=1)
+
+        self.last_embedding = None
+        self.iter = 0
+
+    def step(self, state, action):
+        state = state.to(self.device)
+        action = torch.tensor([action]).to(self.device)
+        action_batch = torch.from_numpy(
+            np.array(
+                [[1, 0] if action == 0 else [0, 1]],
+                dtype=np.float32,
+            )
+        )
+        action_batch = action_batch.to(self.device)
+
+        pred_act, embedding = self.model(state, action)
+
+        if self.last_embedding is not None:
+            self.iter += 1
+            iter = self.iter
+
+            self.optimizer.zero_grad()
+            thinking_loss = (
+                1 - self.think_criterion(embedding, self.last_embedding).mean()
+            ) * 0.001
+
+            mse_loss = self.criterion(pred_act, action_batch)
+
+            loss = mse_loss + thinking_loss
+
+            loss.backward()
+            self.optimizer.step()
+
+            print(
+                "Iter: {}, Loss: {}, MSE Loss: {}, Thinking Loss: {}".format(
+                    iter, loss, mse_loss, thinking_loss
+                )
+            )
+
+            self.writer.add_scalar("Train/Loss", loss, iter)
+            self.writer.add_scalar("Train/MSE Loss", mse_loss, iter)
+            self.writer.add_scalar("Train/Thinking Loss", thinking_loss, iter)
+
+            if iter % checkpoint_freq == 0:
+                torch.save(
+                    self.model, "{}/flappy_bird_{}".format(self.output_path, iter + 1)
+                )
+
+        self.last_embedding = embedding.detach()
+
 
 def train(opt):
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(123)
-    else:
-        torch.manual_seed(123)
-    model = Thinking()
-    target_model = Thinking().to(device)  # 定义目标网络
-    target_model.load_state_dict(model.state_dict())  # 初始化目标网络
 
-    writer = SummaryWriter(opt.log_path)
+    trainer = ThinkingTrainer(opt)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
-    criterion = nn.MSELoss()
-    think_criterion = nn.CosineSimilarity(dim=1)
+    model = torch.load(
+        "trained_models/net_2/flappy_bird_1000000",
+        map_location=lambda storage, loc: storage,
+    )
+    model.eval()
     game_state = FlappyBird()
     image, reward, terminal = game_state.next_frame(0)
     image = pre_processing(
@@ -40,37 +100,18 @@ def train(opt):
         opt.image_size,
     )
     image = torch.from_numpy(image)
-
-    model = model.to(device)
-    image = image.to(device)
-
-    # 在深度强化学习中，通常使用一个序列帧来描述环境的状态，帮助模型捕捉动态变化。这里假设一开始所有帧都是相同的。
-    # image: (84, 84)
-    # state: (1, 4, 84, 84)
+    if torch.cuda.is_available():
+        model.cuda()
+        image = image.cuda()
     state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
 
-    replay_memory = []
-    iter = 0
-    target_update_freq = 1000  # 每隔 1000 步更新一次目标网络
+    iter = -5
+    while iter < max_steps:
+        prediction = model(state)[0]
+        print(prediction.shape)
+        action = torch.argmax(prediction).item()
 
-    while iter < opt.num_iters:
-        prediction, _ = model(state)
-        prediction = prediction[0]
-        # Exploration or exploitation
-        epsilon = opt.final_epsilon + (
-            (opt.num_iters - iter)
-            * (opt.initial_epsilon - opt.final_epsilon)
-            / opt.num_iters
-        )
-        u = random()
-        random_action = u <= epsilon
-        if random_action:
-            print("Perform a random action")
-            action = 1 if random() <= 0.1 else 0
-            # action = randint(0, 1)
-        else:
-
-            action = torch.argmax(prediction).item()
+        trainer.step(state, action)
 
         next_image, reward, terminal = game_state.next_frame(action)
         next_image = pre_processing(
@@ -79,95 +120,14 @@ def train(opt):
             opt.image_size,
         )
         next_image = torch.from_numpy(next_image)
-
-        next_image = next_image.to(device)
+        if torch.cuda.is_available():
+            next_image = next_image.cuda()
         next_state = torch.cat((state[0, 1:, :, :], next_image))[None, :, :, :]
-
-        replay_memory.append([state, action, reward, next_state, terminal])
-        if len(replay_memory) > opt.replay_memory_size:
-            del replay_memory[0]
-
-        batch = sample(replay_memory, min(len(replay_memory), opt.batch_size))
-        state_batch, action_batch, reward_batch, next_state_batch, terminal_batch = zip(
-            *batch
-        )
-
-        state_batch = torch.cat(tuple(state for state in state_batch))
-        action_batch = torch.tensor(action_batch)
-        reward_batch = torch.from_numpy(
-            np.array(reward_batch, dtype=np.float32)[:, None]
-        )
-        next_state_batch = torch.cat(tuple(state for state in next_state_batch))
-
-        state_batch = state_batch.to(device)
-        action_batch = action_batch.to(device)
-        reward_batch = reward_batch.to(device)
-        next_state_batch = next_state_batch.to(device)
-
-        current_prediction_batch, predict = model(state_batch, action_batch)
-
-        with torch.no_grad():  # 不需要梯度
-            next_prediction_batch, embedding = target_model(
-                next_state_batch
-            )  # 使用目标网络
-
-        y_batch = torch.cat(
-            tuple(
-                reward if terminal else reward + opt.gamma * torch.max(prediction)
-                for reward, terminal, prediction in zip(
-                    reward_batch, terminal_batch, next_prediction_batch
-                )
-            )
-        )
-
-        action_batch = torch.from_numpy(
-            np.array(
-                [[1, 0] if action == 0 else [0, 1] for action in action_batch],
-                dtype=np.float32,
-            )
-        )
-        action_batch = action_batch.to(device)
-        q_value = torch.sum(current_prediction_batch * action_batch, dim=1)
-
-        optimizer.zero_grad()
-        thinking_loss = 1 - think_criterion(embedding, predict).mean()
-        mse_loss = criterion(q_value, y_batch) * 20
-
-        loss = mse_loss + thinking_loss
-
-        loss.backward()
-        optimizer.step()
-
-        # 定期更新目标网络
-        if iter % target_update_freq == 0:
-            target_model.load_state_dict(model.state_dict())
 
         state = next_state
         iter += 1
-        print(
-            "Iteration: {}/{}, Action: {}, Loss: {}({}, {}), Epsilon {}, Reward: {}, Q-value: {}".format(
-                iter + 1,
-                opt.num_iters,
-                action,
-                loss,
-                mse_loss,
-                thinking_loss,
-                epsilon,
-                reward,
-                torch.max(prediction),
-            )
-        )
-        writer.add_scalar("Train/Loss", loss, iter)
-        writer.add_scalar("Train/MSE Loss", mse_loss, iter)
-        writer.add_scalar("Train/Thinking Loss", thinking_loss, iter)
-        writer.add_scalar("Train/Epsilon", epsilon, iter)
-        writer.add_scalar("Train/Reward", reward, iter)
-        writer.add_scalar("Train/Q-value", torch.max(prediction), iter)
-        if (iter + 1) % 200000 == 0:
-            torch.save(model, "{}/flappy_bird_{}".format(opt.saved_path, iter + 1))
-    torch.save(model, "{}/flappy_bird".format(opt.saved_path))
 
 
 if __name__ == "__main__":
-    opt = get_args()
+    opt = get_args("test_thinking")
     train(opt)

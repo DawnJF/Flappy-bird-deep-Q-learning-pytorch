@@ -21,7 +21,7 @@ def get_args():
         help="The common width and height for all images",
     )
     parser.add_argument(
-        "--check_points", type=str, default="trained_models/flappy_bird_800000"
+        "--check_points", type=str, default="outputs/test_thinking/2025-01-29-23-54-12/flappy_bird_60001"
     )
 
     args = parser.parse_args()

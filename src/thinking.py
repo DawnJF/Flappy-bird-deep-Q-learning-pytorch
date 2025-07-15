@@ -27,7 +27,7 @@ class Thinking(nn.Module):
             nn.LayerNorm(64),
         )
         self.fc2 = nn.Linear(64, 2)
-        self._create_weights()
+        # self._create_weights()
 
     def _create_weights(self):
         for m in self.modules():
