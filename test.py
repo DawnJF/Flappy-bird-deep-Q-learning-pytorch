@@ -178,7 +178,7 @@ def get_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="test_results",
+        default="outputs/dataset",
         help="Directory to save test results",
     )
 
