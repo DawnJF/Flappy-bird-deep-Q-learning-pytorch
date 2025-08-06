@@ -93,3 +93,37 @@ class HDF5DataSaver:
         """Ensure file is closed"""
         if self.file:
             self.file.close()
+
+
+def load_data(filepath: str):
+    """Load data from HDF5 file"""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    data = {}
+    with h5py.File(filepath, "r") as file:
+        # Load datasets
+        data["observations"] = np.array(file["observations"])
+        data["actions"] = np.array(file["actions"])
+        data["steps"] = np.array(file["steps"])
+
+        # Load metadata
+        data["metadata"] = {}
+        if "metadata" in file:
+            metadata_group = file["metadata"]
+            for key in metadata_group.attrs.keys():
+                data["metadata"][key] = metadata_group.attrs[key]
+
+        # Load file-level attributes
+        for key in file.attrs.keys():
+            data["metadata"][key] = file.attrs[key]
+
+    return data
+
+
+if __name__ == "__main__":
+
+    data = load_data(
+        "outputs/dataset/observations_actions_flappy_bird_800000_20250806_003553.h5"
+    )
+    print(data["observations"].shape)

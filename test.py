@@ -15,7 +15,7 @@ import h5py
 from src.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
 from src.utils import pre_processing
-from data_saver import HDF5DataSaver
+from dataset import HDF5DataSaver
 
 
 class TestRunner:
