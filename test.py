@@ -1,18 +1,35 @@
-"""
-@author: Viet Nguyen <nhviet1009@gmail.com>
-"""
-
-import argparse
+import tyro
 import torch
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
+from dataclasses import dataclass
 
 from src.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
 from src.utils import get_device, save_np_as_image
 from src.obs_processor import ObsProcessor
 from src.dataset import HDF5DataSaver
+
+
+@dataclass
+class Args:
+    """Implementation of Deep Q Network to play Flappy Bird - Testing"""
+
+    image_size: int = 84
+    """The common width and height for all images"""
+
+    model_path: str = "outputs/trained_models/flappy_bird_800000"
+    """Path to the trained model"""
+
+    max_steps: int = 10000000000
+    """Maximum steps per test episode"""
+
+    save_data: bool = True
+    """Save test data and results"""
+
+    output_dir: str = "outputs/dataset"
+    """Directory to save test results"""
 
 
 class TestRunner:
@@ -63,14 +80,10 @@ class TestRunner:
     def _load_model(self):
         """Load the trained model"""
         print(f"Loading model: {self.model_path}")
-        if torch.cuda.is_available():
-            model = torch.load(self.model_path)
-        else:
-            model = torch.load(
-                self.model_path,
-                map_location=lambda storage, loc: storage,
-                weights_only=False,
-            )
+        model = torch.load(
+            self.model_path,
+            weights_only=False,
+        )
         model.eval()
         model.to(self.device)
         return model
@@ -88,56 +101,48 @@ class TestRunner:
         step_count = 0
         total_reward = 0
 
-        try:
-            while True:
-                if max_steps and step_count >= max_steps:
-                    break
+        while True:
+            if max_steps and step_count >= max_steps:
+                break
 
-                # Get model prediction
-                with torch.no_grad():
-                    prediction = self.model(state)[0]
-                    action = torch.argmax(prediction).item()
+            # Get model prediction
+            with torch.no_grad():
+                prediction = self.model(state)[0]
+                action = torch.argmax(prediction).item()
 
-                # Save observation and action immediately
-                if self.save_data and self.data_saver:
-                    self.data_saver.save_step_data(
-                        step=step_count,
-                        observation=state.cpu().numpy(),
-                        action=action,
-                    )
-
-                # Take action
-                next_image, reward, terminal = self.env.next_frame(action)
-                next_state = self.state_processor.update_state(next_image)
-
-                total_reward += reward
-                step_count += 1
-
-                if verbose and step_count % 100 == 0:
-                    print(
-                        f"Step: {step_count}, Action: {action}, Reward: {reward}, Total Reward: {total_reward}"
-                    )
-
-                if terminal:
-                    if verbose:
-                        print(
-                            f"Game Over! Steps: {step_count}, Total Reward: {total_reward}"
-                        )
-                    # Finalize data file
-                    if self.save_data and self.data_saver:
-                        final_score = getattr(self.env, "score", 0)
-                        self.data_saver.finalize(step_count, total_reward, final_score)
-                        print(f"Data saved to: {self.data_saver.filepath}")
-                    break
-
-                state = next_state
-
-        except Exception as e:
-            # Ensure data is saved even if an error occurs
+            # Save observation and action immediately
             if self.save_data and self.data_saver:
-                final_score = getattr(self.env, "score", 0)
-                self.data_saver.finalize(step_count, total_reward, final_score)
-            raise e
+                self.data_saver.save_step_data(
+                    step=step_count,
+                    observation=state.cpu().numpy(),
+                    action=action,
+                )
+
+            # Take action
+            next_image, reward, terminal = self.env.next_frame(action)
+            next_state = self.state_processor.update_state(next_image)
+
+            total_reward += reward
+            step_count += 1
+
+            if verbose and step_count % 100 == 0:
+                print(
+                    f"Step: {step_count}, Action: {action}, Reward: {reward}, Total Reward: {total_reward}"
+                )
+
+            if terminal:
+                if verbose:
+                    print(
+                        f"Game Over! Steps: {step_count}, Total Reward: {total_reward}"
+                    )
+                # Finalize data file
+                if self.save_data and self.data_saver:
+                    final_score = getattr(self.env, "score", 0)
+                    self.data_saver.finalize(step_count, total_reward, final_score)
+                    print(f"Data saved to: {self.data_saver.filepath}")
+                break
+
+            state = next_state
 
         return {
             "steps": step_count,
@@ -146,63 +151,17 @@ class TestRunner:
         }
 
 
-def get_args():
-    parser = argparse.ArgumentParser(
-        """Implementation of Deep Q Network to play Flappy Bird - Testing"""
-    )
-    parser.add_argument(
-        "--image_size",
-        type=int,
-        default=84,
-        help="The common width and height for all images",
-    )
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        default="outputs/trained_models/flappy_bird_800000",
-        help="Path to the trained model",
-    )
-    parser.add_argument(
-        "--max_steps",
-        type=int,
-        default=10000000000,
-        help="Maximum steps per test episode",
-    )
-    parser.add_argument(
-        "--save_data", action="store_true", help="Save test data and results"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="outputs/dataset",
-        help="Directory to save test results",
-    )
+def main():
+    args = tyro.cli(Args)
 
-    return parser.parse_args()
-
-
-def test_single_model(model_path: str, args):
-    """Test a single model"""
     tester = TestRunner(
-        model_path=model_path,
+        model_path=args.model_path,
         image_size=args.image_size,
         save_data=args.save_data,
         output_dir=args.output_dir,
     )
 
     tester.run_test(args.max_steps)
-
-
-def main():
-    args = get_args()
-    args.save_data = True
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(123)
-    else:
-        torch.manual_seed(123)
-
-    test_single_model(args.model_path, args)
 
 
 if __name__ == "__main__":
