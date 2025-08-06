@@ -4,18 +4,15 @@
 
 import argparse
 import torch
-import json
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
-import pickle
-import numpy as np
-import h5py
 
 from src.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
-from src.utils import pre_processing
-from dataset import HDF5DataSaver
+from src.utils import get_device, save_np_as_image
+from src.obs_processor import ObsProcessor
+from src.dataset import HDF5DataSaver
 
 
 class TestRunner:
@@ -45,9 +42,16 @@ class TestRunner:
             self.data_saver = HDF5DataSaver(data_filepath, model_path)
 
         # Initialize model and game
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_device()
         self.model = self._load_model()
-        self.game_state = FlappyBird()
+        self.env = FlappyBird()
+
+        # Initialize state processor
+        self.state_processor = ObsProcessor(
+            original_image_size=(self.env.screen_width, int(self.env.base_y)),
+            target_image_size=self.image_size,
+            device=self.device,
+        )
 
         # Data collection
         self.test_data = {
@@ -71,20 +75,10 @@ class TestRunner:
         model.to(self.device)
         return model
 
-    def _preprocess_image(self, image):
-        """Preprocess game image"""
-        processed = pre_processing(
-            image[: self.game_state.screen_width, : int(self.game_state.base_y)],
-            self.image_size,
-            self.image_size,
-        )
-        return torch.from_numpy(processed).to(self.device)
-
     def _get_initial_state(self):
-        """Get initial game state"""
-        image, reward, terminal = self.game_state.next_frame(0)
-        image = self._preprocess_image(image)
-        state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
+        """Get initial game state using ObsProcessor"""
+        image, reward, terminal = self.env.next_frame(0)
+        state = self.state_processor.initialize_state(image)
         return state, reward, terminal
 
     def run_test(self, max_steps: Optional[int] = None, verbose: bool = True):
@@ -113,9 +107,8 @@ class TestRunner:
                     )
 
                 # Take action
-                next_image, reward, terminal = self.game_state.next_frame(action)
-                next_image = self._preprocess_image(next_image)
-                next_state = torch.cat((state[0, 1:, :, :], next_image))[None, :, :, :]
+                next_image, reward, terminal = self.env.next_frame(action)
+                next_state = self.state_processor.update_state(next_image)
 
                 total_reward += reward
                 step_count += 1
@@ -132,7 +125,7 @@ class TestRunner:
                         )
                     # Finalize data file
                     if self.save_data and self.data_saver:
-                        final_score = getattr(self.game_state, "score", 0)
+                        final_score = getattr(self.env, "score", 0)
                         self.data_saver.finalize(step_count, total_reward, final_score)
                         print(f"Data saved to: {self.data_saver.filepath}")
                     break
@@ -142,14 +135,14 @@ class TestRunner:
         except Exception as e:
             # Ensure data is saved even if an error occurs
             if self.save_data and self.data_saver:
-                final_score = getattr(self.game_state, "score", 0)
+                final_score = getattr(self.env, "score", 0)
                 self.data_saver.finalize(step_count, total_reward, final_score)
             raise e
 
         return {
             "steps": step_count,
             "total_reward": total_reward,
-            "final_score": getattr(self.game_state, "score", 0),
+            "final_score": getattr(self.env, "score", 0),
         }
 
 
@@ -166,11 +159,14 @@ def get_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="trained_models/flappy_bird_800000",
+        default="outputs/trained_models/flappy_bird_800000",
         help="Path to the trained model",
     )
     parser.add_argument(
-        "--max_steps", type=int, default=None, help="Maximum steps per test episode"
+        "--max_steps",
+        type=int,
+        default=10000000000,
+        help="Maximum steps per test episode",
     )
     parser.add_argument(
         "--save_data", action="store_true", help="Save test data and results"

@@ -1,11 +1,63 @@
-"""
-@author: Viet Nguyen <nhviet1009@gmail.com>
-"""
+import os
+import time
 import cv2
 import numpy as np
+import torch
+from PIL import Image
 
 
 def pre_processing(image, width, height):
     image = cv2.cvtColor(cv2.resize(image, (width, height)), cv2.COLOR_BGR2GRAY)
     _, image = cv2.threshold(image, 1, 255, cv2.THRESH_BINARY)
     return image[None, :, :].astype(np.float32)
+
+
+def get_device():
+    """自动检测并返回最佳设备"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
+def save_np_as_image(array, save_path="outputs/test_images"):
+    """
+    将numpy数组保存为图片文件，使用随机时间戳作为文件名
+
+    Args:
+        np_array: numpy数组，表示图像
+        save_path: 保存路径（目录）
+
+    Returns:
+        str: 保存的完整文件路径
+    """
+    # 确保保存目录存在
+    os.makedirs(save_path, exist_ok=True)
+
+    if isinstance(array, torch.Tensor):
+        # 如果是torch张量，转换为numpy数组
+        np_array = array.cpu().numpy()
+    elif isinstance(array, np.ndarray):
+        np_array = array
+
+    np_array = np_array.squeeze()
+    # 确保数据类型正确
+    if np_array.dtype != np.uint8:
+        # 如果是浮点数，假设范围在[0,1]或[0,255]
+        if np_array.max() <= 1.0:
+            np_array = (np_array * 255).astype(np.uint8)
+        else:
+            np_array = np_array.astype(np.uint8)
+
+    # 使用PIL保存图片
+    pil_image = Image.fromarray(np_array)
+
+    # 生成基于时间戳格式化的文件名
+
+    filename = f"image_{time.strftime('%Y%m%d_%H%M%S')}_{pil_image.size}.png"
+    full_path = os.path.join(save_path, filename)
+    pil_image.save(full_path)
+
+    return full_path
