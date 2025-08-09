@@ -2,6 +2,9 @@ import h5py
 import numpy as np
 import os
 from datetime import datetime
+import threading
+import queue
+from typing import Optional, Tuple, Any
 
 
 class HDF5DataSaver:
@@ -12,11 +15,19 @@ class HDF5DataSaver:
         self.step_count = 0
         self.datasets = {}
 
+        # Threading components
+        self.data_queue = queue.Queue()
+        self.worker_thread = None
+        self.stop_event = threading.Event()
+
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         # Open HDF5 file and initialize datasets
         self._initialize_file()
+
+        # Start worker thread
+        self._start_worker_thread()
 
     def _initialize_file(self):
         """Initialize HDF5 file and datasets"""
@@ -41,8 +52,32 @@ class HDF5DataSaver:
             "steps", (0,), maxshape=(None,), dtype=np.int32, chunks=True
         )
 
-    def save_step_data(self, step: int, observation: np.ndarray, action: np.ndarray):
-        """Save data for one step"""
+    def _start_worker_thread(self):
+        """Start the background worker thread"""
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.worker_thread.start()
+
+    def _worker_loop(self):
+        """Background worker thread that handles actual HDF5 writing"""
+        while not self.stop_event.is_set():
+            try:
+                # Wait for data with timeout to allow checking stop_event
+                data_item = self.data_queue.get(timeout=1.0)
+                if data_item is None:  # Sentinel value to stop
+                    break
+
+                step, observation, action = data_item
+                self._write_step_data(step, observation, action)
+                self.data_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Error in worker thread: {e}")
+                continue
+
+    def _write_step_data(self, step: int, observation: np.ndarray, action: np.ndarray):
+        """Actually write data to HDF5 (runs in background thread)"""
         if not self.observations_initialized:
             # Initialize observations dataset with proper shape
             obs_shape = observation.shape
@@ -75,8 +110,24 @@ class HDF5DataSaver:
         if self.step_count % 100 == 0:
             self.file.flush()
 
+    def save_step_data(self, step: int, observation: np.ndarray, action: np.ndarray):
+        """Save data for one step (non-blocking)"""
+        # Just add to queue, don't block
+        self.data_queue.put((step, observation.copy(), action.copy()))
+
     def finalize(self, total_steps: int, total_reward: float, final_score: int):
         """Finalize the file with summary information"""
+        # Wait for all queued data to be processed
+        self.data_queue.join()
+
+        # Signal worker thread to stop
+        self.stop_event.set()
+        self.data_queue.put(None)  # Sentinel value
+
+        # Wait for worker thread to finish
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join()
+
         if self.file:
             # Add final metadata
             self.file.attrs["end_time"] = datetime.now().isoformat()
@@ -90,7 +141,15 @@ class HDF5DataSaver:
             self.file = None
 
     def __del__(self):
-        """Ensure file is closed"""
+        """Ensure file is closed and thread is stopped"""
+        if hasattr(self, "stop_event"):
+            self.stop_event.set()
+        if (
+            hasattr(self, "worker_thread")
+            and self.worker_thread
+            and self.worker_thread.is_alive()
+        ):
+            self.worker_thread.join(timeout=5.0)
         if self.file:
             self.file.close()
 

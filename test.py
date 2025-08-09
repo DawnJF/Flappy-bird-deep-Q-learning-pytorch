@@ -158,7 +158,10 @@ def main():
         output_dir=args.output_dir,
     )
 
-    tester.run_test(args.max_steps)
+    try:
+        tester.run_test(args.max_steps)
+    except KeyboardInterrupt:
+        del tester
 
 
 if __name__ == "__main__":
