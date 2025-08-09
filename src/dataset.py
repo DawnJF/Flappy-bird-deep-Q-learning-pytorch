@@ -48,8 +48,8 @@ class HDF5DataSaver:
             obs_shape = observation.shape
             self.datasets["observations"] = self.file.create_dataset(
                 "observations",
-                (0,) + obs_shape[1:],  # Skip batch dimension
-                maxshape=(None,) + obs_shape[1:],
+                (0,) + obs_shape,
+                maxshape=(None,) + obs_shape,
                 dtype=np.float32,
                 chunks=True,
             )
@@ -124,6 +124,7 @@ def load_data(filepath: str):
 if __name__ == "__main__":
 
     data = load_data(
-        "outputs/dataset/observations_actions_flappy_bird_800000_20250806_003553.h5"
+        "outputs/dataset/observations_actions_flappy_bird_800000_20250809_161431.h5"
     )
+    print(data.keys())
     print(data["observations"].shape)

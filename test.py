@@ -1,3 +1,4 @@
+import numpy as np
 import tyro
 import torch
 import os
@@ -88,15 +89,10 @@ class TestRunner:
         model.to(self.device)
         return model
 
-    def _get_initial_state(self):
-        """Get initial game state using ObsProcessor"""
-        image, reward, terminal = self.env.next_frame(0)
-        state = self.state_processor.initialize_state(image)
-        return state, reward, terminal
-
     def run_test(self, max_steps: Optional[int] = None, verbose: bool = True):
         """Run a single test episode"""
-        state, reward, terminal = self._get_initial_state()
+        image, reward, terminal = self.env.next_frame(0)
+        state = self.state_processor.initialize_state(image)
 
         step_count = 0
         total_reward = 0
@@ -110,14 +106,6 @@ class TestRunner:
                 prediction = self.model(state)[0]
                 action = torch.argmax(prediction).item()
 
-            # Save observation and action immediately
-            if self.save_data and self.data_saver:
-                self.data_saver.save_step_data(
-                    step=step_count,
-                    observation=state.cpu().numpy(),
-                    action=action,
-                )
-
             # Take action
             next_image, reward, terminal = self.env.next_frame(action)
             next_state = self.state_processor.update_state(next_image)
@@ -130,19 +118,28 @@ class TestRunner:
                     f"Step: {step_count}, Action: {action}, Reward: {reward}, Total Reward: {total_reward}"
                 )
 
+            # Save observation and action immediately
+            if self.data_saver:
+                self.data_saver.save_step_data(
+                    step=step_count,
+                    observation=image,
+                    action=np.array(action),
+                )
+
             if terminal:
                 if verbose:
                     print(
                         f"Game Over! Steps: {step_count}, Total Reward: {total_reward}"
                     )
                 # Finalize data file
-                if self.save_data and self.data_saver:
+                if self.data_saver:
                     final_score = getattr(self.env, "score", 0)
                     self.data_saver.finalize(step_count, total_reward, final_score)
                     print(f"Data saved to: {self.data_saver.filepath}")
                 break
 
             state = next_state
+            image = next_image
 
         return {
             "steps": step_count,
