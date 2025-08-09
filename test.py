@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
-from src.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
 from src.utils import get_device, save_np_as_image
 from src.obs_processor import ObsProcessor

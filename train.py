@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 
-from src.deep_q_network import DeepQNetwork
+from net.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
 from src.utils import pre_processing
 
