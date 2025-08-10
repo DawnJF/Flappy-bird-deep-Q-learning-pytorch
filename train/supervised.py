@@ -44,7 +44,7 @@ class Config:
     # 训练参数
     batch_size: int = 64
     learning_rate: float = 1e-4
-    num_epochs: int = 40
+    num_epochs: int = 20
 
     # 模型参数
     action_dim: int = 2
@@ -117,6 +117,7 @@ def train(config: Config):
     setup_logging(config.output_dir)
 
     train_loader, val_loader = load_and_preprocess_dataset(config)
+    all_global_step = config.num_epochs * len(train_loader)
 
     # 创建模型
     model = Thinking(asdict(config))
@@ -129,7 +130,7 @@ def train(config: Config):
     # TensorBoard记录器
     writer = SummaryWriter(config.output_dir)
     logging.info(f"TensorBoard日志保存在: {config.output_dir}")
-    logging.info("开始训练...")
+    logging.info(f"开始训练... all_global_step: {all_global_step}")
 
     # 训练循环
     global_step = 0
@@ -166,18 +167,18 @@ def train(config: Config):
             train_total += actions_batch.size(0)
             train_correct += (predicted == actions_batch).sum().item()
 
-            # 记录到TensorBoard
-            if batch_idx % config.print_freq == 0:
-                writer.add_scalar("Loss/Train_Batch", loss.item(), global_step)
-                writer.add_scalar(
-                    "Accuracy/Train_Batch",
-                    100.0 * train_correct / train_total,
-                    global_step,
-                )
+            writer.add_scalar("Step/Train_Loss", loss.item(), global_step)
+            writer.add_scalar(
+                "Step/Train_Accuracy",
+                100.0 * train_correct / train_total,
+                global_step,
+            )
+            writer.add_scalar("Step/Epoch", epoch + 1, global_step)
 
+            if global_step % config.print_freq == 0:
                 logging.info(
                     f"Epoch [{epoch+1}/{config.num_epochs}], "
-                    f"Batch [{batch_idx}/{len(train_loader)}], "
+                    f"Global Step [{global_step}], "
                     f"Loss: {loss.item():.4f}, "
                     f"Acc: {100.0 * train_correct / train_total:.2f}%"
                 )
@@ -213,13 +214,10 @@ def train(config: Config):
         val_acc = 100.0 * val_correct / val_total
 
         # 记录epoch级别的指标到TensorBoard
-        writer.add_scalar("Loss/Train_Epoch", avg_train_loss, epoch)
-        writer.add_scalar("Loss/Val_Epoch", avg_val_loss, epoch)
-        writer.add_scalar("Accuracy/Train_Epoch", train_acc, epoch)
-        writer.add_scalar("Accuracy/Val_Epoch", val_acc, epoch)
-
-        # 记录学习率
-        writer.add_scalar("Learning_Rate", optimizer.param_groups[0]["lr"], epoch)
+        writer.add_scalar("Epoch/Train_Loss", avg_train_loss, epoch)
+        writer.add_scalar("Epoch/Train_Accuracy", train_acc, epoch)
+        writer.add_scalar("Epoch/Val_Loss", avg_val_loss, epoch)
+        writer.add_scalar("Epoch/Val_Accuracy", val_acc, epoch)
 
         logging.info(f"Epoch [{epoch+1}/{config.num_epochs}] 完成")
         logging.info(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
@@ -242,10 +240,12 @@ def train(config: Config):
                     "val_loss": avg_val_loss,
                 },
             )
-            print(f"保存最佳模型: {best_model_path} (验证准确率: {val_acc:.2f}%)")
+            logging.info(
+                f"**** 保存最佳模型: {best_model_path} (验证准确率: {val_acc:.2f}%) ****"
+            )
 
         # 定期保存检查点
-        if (epoch + 1) % config.save_freq == 0:
+        if (global_step + 1) % config.save_freq == 0:
             checkpoint_path = os.path.join(
                 config.output_dir, f"checkpoint_epoch_{epoch+1}_{timestamp}.pth"
             )
