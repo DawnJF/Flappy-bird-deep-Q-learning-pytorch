@@ -182,8 +182,11 @@ def load_data(filepath: str):
 
 if __name__ == "__main__":
 
-    data = load_data(
-        "outputs/dataset/observations_actions_flappy_bird_800000_20250809_161431.h5"
+    file = (
+        "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
     )
+
+    print(f"Loading data from {file}")
+    data = load_data(file)
     print(data.keys())
     print(data["observations"].shape)

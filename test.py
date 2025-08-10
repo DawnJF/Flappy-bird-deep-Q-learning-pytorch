@@ -23,9 +23,7 @@ class Args:
 
     # model_path: str = "outputs/trained_models/dqn_2000000"
     # model_name = DeepQNetwork
-    model_path: str = (
-        "outputs/supervised/train_2025_0810_184220/final_model_2025_0810_184220.pth"
-    )
+    model_path: str = "outputs/supervised/train_2025_0811_001512/best_model_2000.pth"
     model_name = Thinking
 
     max_steps: int = 10000000000

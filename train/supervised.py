@@ -1,3 +1,4 @@
+import itertools
 import logging
 import numpy as np
 import tyro
@@ -20,6 +21,32 @@ from src.dataset import load_data
 from src.net.thinking import Thinking
 
 
+@dataclass
+class Config:
+    # 数据路径
+    data_path: str = (
+        "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
+    )
+    data_size: int = 20000
+
+    # 训练参数
+    batch_size: int = 64
+    learning_rate: float = 1e-4
+    num_step: int = 4000
+    save_freq: int = num_step // 4
+    logging_freq: int = 200
+
+    # 模型参数
+    action_dim: int = 2
+    feal_dim: int = 0
+    channel_dim: int = 1
+
+    output_dir: str = "outputs/supervised"
+
+
+device = get_device()
+
+
 class FlappyBirdDataset(Dataset):
     """FlappyBird数据集"""
 
@@ -34,41 +61,60 @@ class FlappyBirdDataset(Dataset):
         return self.observations[idx], self.actions[idx]
 
 
-@dataclass
-class Config:
-    # 数据路径
-    data_path: str = (
-        "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250808_005810.h5"
-    )
+def save_model_checkpoint(
+    model,
+    config,
+    output_dir,
+    epoch,
+    step,
+    val_acc,
+    val_loss,
+    checkpoint_type="checkpoint",
+):
+    """保存模型检查点的辅助函数"""
+    if checkpoint_type == "best":
+        logging.info(f"保存最佳模型 (Step {step})")
+        filename = f"best_model_{step}.pth"
+        # delete last best model
+        last_best_model = os.path.join(
+            output_dir, f"best_model_{step - config.save_freq}.pth"
+        )
+        if os.path.exists(last_best_model):
+            os.remove(last_best_model)
+    elif checkpoint_type == "final":
+        logging.info(f"最终模型 (Step {step})")
+        filename = f"final_model_{step}.pth"
+    else:
+        logging.info(f"保存检查点 (Step {step})")
+        filename = f"checkpoint_{step}.pth"
 
-    # 训练参数
-    batch_size: int = 64
-    learning_rate: float = 1e-4
-    num_epochs: int = 20
+    model_path = os.path.join(output_dir, filename)
 
-    # 模型参数
-    action_dim: int = 2
-    feal_dim: int = 0
-    channel_dim: int = 1
+    metadata = {
+        "epoch": epoch,
+        "step": step,
+        "val_acc": val_acc,
+        "val_loss": val_loss,
+    }
 
-    output_dir: str = "outputs/supervised"
-    print_freq: int = 100
-    save_freq: int = 20
+    save_model(model, model_path, asdict(config), metadata)
 
-
-device = get_device()
+    return model_path
 
 
 def load_and_preprocess_dataset(config):
 
     # 加载数据
     data = load_data(config.data_path)
-    observations = data["observations"]
-    actions = data["actions"]
+    logging.info(f"data len: {len(data['observations'])}")
 
-    print(f"观测数据形状: {observations.shape}")
-    print(f"动作数据形状: {actions.shape}")
-    print(f"数据样本数量: {len(observations)}")
+    data_size = config.data_size if config.data_size > 0 else len(data["observations"])
+    observations = data["observations"][:data_size]
+    actions = data["actions"][:data_size]
+
+    logging.info(f"观测数据形状: {observations.shape}")
+    logging.info(f"动作数据形状: {actions.shape}")
+    logging.info(f"数据样本数量: {len(observations)}")
 
     # 数据预处理 - 调整观测数据维度为 (N, C, H, W)
     if len(observations.shape) == 3:  # (N, H, W)
@@ -83,7 +129,7 @@ def load_and_preprocess_dataset(config):
     if config.channel_dim == 1:
         observations = observations[:, 3:4, :, :]  # 保留第4个通道
 
-    print(f"预处理后观测数据形状: {observations.shape}")
+    logging.info(f"预处理后观测数据形状: {observations.shape}")
 
     # 创建数据集和数据加载器
     dataset = FlappyBirdDataset(observations, actions)
@@ -95,8 +141,8 @@ def load_and_preprocess_dataset(config):
         dataset, [train_size, val_size]
     )
 
-    print(f"训练集大小: {len(train_dataset)}")
-    print(f"验证集大小: {len(val_dataset)}")
+    logging.info(f"训练集大小: {len(train_dataset)}")
+    logging.info(f"验证集大小: {len(val_dataset)}")
 
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
@@ -107,8 +153,6 @@ def load_and_preprocess_dataset(config):
 def train(config: Config):
     """训练模型"""
 
-    print(f"加载数据: {config.data_path}")
-
     timestamp = datetime.now().strftime("%Y_%m%d_%H%M%S")
     config.output_dir = os.path.join(config.output_dir, f"train_{timestamp}")
 
@@ -116,8 +160,17 @@ def train(config: Config):
     os.makedirs(config.output_dir, exist_ok=True)
     setup_logging(config.output_dir)
 
+    logging.info("=" * 60)
+    logging.info("FlappyBird 监督学习训练")
+    logging.info("=" * 60)
+    logging.info(f"配置:")
+    for key, value in asdict(config).items():
+        logging.info(f"  {key}: {value}")
+    logging.info("=" * 60)
+
+    logging.info(f"加载数据: {config.data_path}")
+
     train_loader, val_loader = load_and_preprocess_dataset(config)
-    all_global_step = config.num_epochs * len(train_loader)
 
     # 创建模型
     model = Thinking(asdict(config))
@@ -130,164 +183,159 @@ def train(config: Config):
     # TensorBoard记录器
     writer = SummaryWriter(config.output_dir)
     logging.info(f"TensorBoard日志保存在: {config.output_dir}")
-    logging.info(f"开始训练... all_global_step: {all_global_step}")
 
-    # 训练循环
-    global_step = 0
+    steps_per_epoch = len(train_loader)
+    logging.info(f"开始训练(总步数: {config.num_step}, 每轮步数: {steps_per_epoch})...")
+
+    # 创建数据加载器的无限迭代器
+    train_iter = itertools.cycle(train_loader)
+
+    # 训练和验证累积统计
     best_val_acc = 0.0
+    train_loss_acc = 0.0
+    train_correct_acc = 0
+    train_total_acc = 0
+    epoch_step_count = 0
 
-    for epoch in range(config.num_epochs):
-        # 训练阶段
+    for step in range(1, config.num_step + 1):
         model.train()
-        train_loss = 0.0
-        train_correct = 0
-        train_total = 0
 
-        for batch_idx, (observations_batch, actions_batch) in enumerate(train_loader):
-            observations_batch = observations_batch.to(device)
-            actions_batch = actions_batch.to(device)
+        observations_batch, actions_batch = next(train_iter)
 
-            # 前向传播
-            optimizer.zero_grad()
-            outputs = model(observations_batch)
+        observations_batch = observations_batch.to(device)
+        actions_batch = actions_batch.to(device)
 
-            # 从模型输出中提取动作预测
-            # 假设模型输出的最后action_dim个值是动作预测
-            action_logits = outputs[:, -config.action_dim :]
+        # 前向传播
+        optimizer.zero_grad()
+        outputs = model(observations_batch)
+        action_logits = outputs[:, -config.action_dim :]
+        loss = criterion(action_logits, actions_batch)
 
-            loss = criterion(action_logits, actions_batch)
+        # 反向传播
+        loss.backward()
+        optimizer.step()
 
-            # 反向传播
-            loss.backward()
-            optimizer.step()
+        # 累积统计
+        train_loss_acc += loss.item()
+        _, predicted = torch.max(action_logits.data, 1)
+        train_total_acc += actions_batch.size(0)
+        train_correct_acc += (predicted == actions_batch).sum().item()
+        epoch_step_count += 1
 
-            # 统计
-            train_loss += loss.item()
-            _, predicted = torch.max(action_logits.data, 1)
-            train_total += actions_batch.size(0)
-            train_correct += (predicted == actions_batch).sum().item()
+        # 计算当前epoch
+        current_epoch = (step - 1) // steps_per_epoch + 1
 
-            writer.add_scalar("Step/Train_Loss", loss.item(), global_step)
-            writer.add_scalar(
-                "Step/Train_Accuracy",
-                100.0 * train_correct / train_total,
-                global_step,
+        # 记录到TensorBoard
+        writer.add_scalar("Step/Train_Loss", loss.item(), step)
+        writer.add_scalar(
+            "Step/Train_Accuracy", 100.0 * train_correct_acc / train_total_acc, step
+        )
+        writer.add_scalar("Step/Epoch", current_epoch, step)
+
+        # 打印训练进度
+        if step % config.logging_freq == 0:
+            logging.info(
+                f"Step [{step}/{config.num_step}] (Epoch {current_epoch}), "
+                f"Loss: {loss.item():.4f}, "
+                f"Acc: {100.0 * train_correct_acc / train_total_acc:.2f}%"
             )
-            writer.add_scalar("Step/Epoch", epoch + 1, global_step)
 
-            if global_step % config.print_freq == 0:
-                logging.info(
-                    f"Epoch [{epoch+1}/{config.num_epochs}], "
-                    f"Global Step [{global_step}], "
-                    f"Loss: {loss.item():.4f}, "
-                    f"Acc: {100.0 * train_correct / train_total:.2f}%"
+        if step % config.save_freq == 0:
+            # 计算训练平均值
+            avg_train_loss = train_loss_acc / epoch_step_count
+            train_acc = 100.0 * train_correct_acc / train_total_acc
+
+            # 验证阶段
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+
+            with torch.no_grad():
+                for observations_batch, actions_batch in val_loader:
+                    observations_batch = observations_batch.to(device)
+                    actions_batch = actions_batch.to(device)
+
+                    outputs = model(observations_batch)
+                    action_logits = outputs[:, -config.action_dim :]
+
+                    loss = criterion(action_logits, actions_batch)
+                    val_loss += loss.item()
+
+                    _, predicted = torch.max(action_logits.data, 1)
+                    val_total += actions_batch.size(0)
+                    val_correct += (predicted == actions_batch).sum().item()
+
+            avg_val_loss = val_loss / len(val_loader)
+            val_acc = 100.0 * val_correct / val_total
+
+            # 记录epoch级别的指标到TensorBoard
+            writer.add_scalar("Epoch/Train_Loss", avg_train_loss, current_epoch)
+            writer.add_scalar("Epoch/Train_Accuracy", train_acc, current_epoch)
+            writer.add_scalar("Epoch/Val_Loss", avg_val_loss, current_epoch)
+            writer.add_scalar("Epoch/Val_Accuracy", val_acc, current_epoch)
+
+            logging.info(f"Epoch {current_epoch} 完成 (Step {step})")
+            logging.info(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
+            logging.info(f"验证 - Loss: {avg_val_loss:.4f}, Acc: {val_acc:.2f}%")
+            logging.info("-" * 60)
+
+            save_model_checkpoint(
+                model,
+                config,
+                config.output_dir,
+                current_epoch,
+                step,
+                val_acc,
+                avg_val_loss,
+                checkpoint_type="checkpoint",
+            )
+
+            # 保存最佳模型
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                save_model_checkpoint(
+                    model,
+                    config,
+                    config.output_dir,
+                    current_epoch,
+                    step,
+                    val_acc,
+                    avg_val_loss,
+                    checkpoint_type="best",
                 )
 
-            global_step += 1
-
-        # 计算epoch平均值
-        avg_train_loss = train_loss / len(train_loader)
-        train_acc = 100.0 * train_correct / train_total
-
-        # 验证阶段
-        model.eval()
-        val_loss = 0.0
-        val_correct = 0
-        val_total = 0
-
-        with torch.no_grad():
-            for observations_batch, actions_batch in val_loader:
-                observations_batch = observations_batch.to(device)
-                actions_batch = actions_batch.to(device)
-
-                outputs = model(observations_batch)
-                action_logits = outputs[:, -config.action_dim :]
-
-                loss = criterion(action_logits, actions_batch)
-                val_loss += loss.item()
-
-                _, predicted = torch.max(action_logits.data, 1)
-                val_total += actions_batch.size(0)
-                val_correct += (predicted == actions_batch).sum().item()
-
-        avg_val_loss = val_loss / len(val_loader)
-        val_acc = 100.0 * val_correct / val_total
-
-        # 记录epoch级别的指标到TensorBoard
-        writer.add_scalar("Epoch/Train_Loss", avg_train_loss, epoch)
-        writer.add_scalar("Epoch/Train_Accuracy", train_acc, epoch)
-        writer.add_scalar("Epoch/Val_Loss", avg_val_loss, epoch)
-        writer.add_scalar("Epoch/Val_Accuracy", val_acc, epoch)
-
-        logging.info(f"Epoch [{epoch+1}/{config.num_epochs}] 完成")
-        logging.info(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
-        logging.info(f"验证 - Loss: {avg_val_loss:.4f}, Acc: {val_acc:.2f}%")
-        logging.info("-" * 60)
-
-        # 保存最佳模型
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_model_path = os.path.join(
-                config.output_dir, f"best_model_{timestamp}.pth"
-            )
-            save_model(
-                model,
-                best_model_path,
-                asdict(config),
-                {
-                    "epoch": epoch + 1,
-                    "val_acc": val_acc,
-                    "val_loss": avg_val_loss,
-                },
-            )
-            logging.info(
-                f"**** 保存最佳模型: {best_model_path} (验证准确率: {val_acc:.2f}%) ****"
-            )
-
-        # 定期保存检查点
-        if (global_step + 1) % config.save_freq == 0:
-            checkpoint_path = os.path.join(
-                config.output_dir, f"checkpoint_epoch_{epoch+1}_{timestamp}.pth"
-            )
-            save_model(
-                model,
-                checkpoint_path,
-                asdict(config),
-                {
-                    "epoch": epoch + 1,
-                    "val_acc": val_acc,
-                    "val_loss": avg_val_loss,
-                },
-            )
-            print(f"保存检查点: {checkpoint_path}")
+            # 重置累积统计
+            train_loss_acc = 0.0
+            train_correct_acc = 0
+            train_total_acc = 0
+            epoch_step_count = 0
 
     # 保存最终模型
-    final_model_path = os.path.join(config.output_dir, f"final_model_{timestamp}.pth")
-
-    save_model(
+    final_epoch = (config.num_step - 1) // steps_per_epoch + 1
+    save_model_checkpoint(
         model,
-        final_model_path,
-        asdict(config),
-        {
-            "epoch": config.num_epochs,
-            "val_acc": val_acc,
-            "val_loss": avg_val_loss,
-        },
+        config,
+        config.output_dir,
+        final_epoch,
+        config.num_step,
+        val_acc,
+        avg_val_loss,
+        checkpoint_type="final",
     )
+
+    writer.close()
 
     logging.info(f"\n训练完成！")
     logging.info(f"最佳验证准确率: {best_val_acc:.2f}%")
-    logging.info(f"最终模型保存在: {final_model_path}")
     logging.info(f"TensorBoard日志: {config.output_dir}")
     logging.info("运行以下命令查看训练过程:")
     logging.info(f"tensorboard --logdir {config.output_dir}")
 
-    writer.close()
-
 
 def evaluate_model(model_path: str, config: Config):
     """评估保存的模型"""
-    print(f"加载模型: {model_path}")
+    logging.info(f"加载模型: {model_path}")
 
     # 加载数据
     data = load_data(config.data_path)
@@ -352,16 +400,4 @@ if __name__ == "__main__":
     # 使用tyro解析命令行参数
     config = tyro.cli(Config)
 
-    logging.info("=" * 60)
-    logging.info("FlappyBird 监督学习训练")
-    logging.info("=" * 60)
-    logging.info(f"配置:")
-    logging.info(f"  数据路径: {config.data_path}")
-    logging.info(f"  批次大小: {config.batch_size}")
-    logging.info(f"  学习率: {config.learning_rate}")
-    logging.info(f"  训练轮数: {config.num_epochs}")
-    logging.info(f"  设备: {device}")
-    logging.info("=" * 60)
-
-    # 开始训练
     train(config)
