@@ -1,10 +1,25 @@
+import logging
 import os
+import sys
 import time
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+
+
+def setup_logging(out_dir):
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(process)d %(levelname)s %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(out_dir, "run.log")),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
 
 
 def pre_processing(image, width, height):

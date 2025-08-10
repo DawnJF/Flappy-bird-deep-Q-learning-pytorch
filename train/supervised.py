@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import tyro
 import torch
@@ -14,7 +15,7 @@ import sys
 
 sys.path.append(os.getcwd())
 
-from src.utils import get_device, save_model
+from src.utils import get_device, save_model, setup_logging
 from src.dataset import load_data
 from src.net.thinking import Thinking
 
@@ -43,11 +44,12 @@ class Config:
     # 训练参数
     batch_size: int = 64
     learning_rate: float = 1e-4
-    num_epochs: int = 20
+    num_epochs: int = 40
 
     # 模型参数
     action_dim: int = 2
     feal_dim: int = 0
+    channel_dim: int = 1
 
     output_dir: str = "outputs/supervised"
     print_freq: int = 100
@@ -57,13 +59,7 @@ class Config:
 device = get_device()
 
 
-def train(config: Config):
-    """训练模型"""
-
-    print(f"加载数据: {config.data_path}")
-
-    # 创建保存目录
-    os.makedirs(config.output_dir, exist_ok=True)
+def load_and_preprocess_dataset(config):
 
     # 加载数据
     data = load_data(config.data_path)
@@ -84,6 +80,9 @@ def train(config: Config):
     if observations.shape[1] == 1:
         observations = np.repeat(observations, 4, axis=1)
 
+    if config.channel_dim == 1:
+        observations = observations[:, 3:4, :, :]  # 保留第4个通道
+
     print(f"预处理后观测数据形状: {observations.shape}")
 
     # 创建数据集和数据加载器
@@ -96,11 +95,28 @@ def train(config: Config):
         dataset, [train_size, val_size]
     )
 
+    print(f"训练集大小: {len(train_dataset)}")
+    print(f"验证集大小: {len(val_dataset)}")
+
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
 
-    print(f"训练集大小: {len(train_dataset)}")
-    print(f"验证集大小: {len(val_dataset)}")
+    return train_loader, val_loader
+
+
+def train(config: Config):
+    """训练模型"""
+
+    print(f"加载数据: {config.data_path}")
+
+    timestamp = datetime.now().strftime("%Y_%m%d_%H%M%S")
+    config.output_dir = os.path.join(config.output_dir, f"train_{timestamp}")
+
+    # 创建保存目录
+    os.makedirs(config.output_dir, exist_ok=True)
+    setup_logging(config.output_dir)
+
+    train_loader, val_loader = load_and_preprocess_dataset(config)
 
     # 创建模型
     model = Thinking(asdict(config))
@@ -111,12 +127,9 @@ def train(config: Config):
     criterion = nn.CrossEntropyLoss()
 
     # TensorBoard记录器
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(config.output_dir, f"experiment_{timestamp}")
-    writer = SummaryWriter(log_path)
-
-    print(f"TensorBoard日志保存在: {log_path}")
-    print("开始训练...")
+    writer = SummaryWriter(config.output_dir)
+    logging.info(f"TensorBoard日志保存在: {config.output_dir}")
+    logging.info("开始训练...")
 
     # 训练循环
     global_step = 0
@@ -162,7 +175,7 @@ def train(config: Config):
                     global_step,
                 )
 
-                print(
+                logging.info(
                     f"Epoch [{epoch+1}/{config.num_epochs}], "
                     f"Batch [{batch_idx}/{len(train_loader)}], "
                     f"Loss: {loss.item():.4f}, "
@@ -208,10 +221,10 @@ def train(config: Config):
         # 记录学习率
         writer.add_scalar("Learning_Rate", optimizer.param_groups[0]["lr"], epoch)
 
-        print(f"Epoch [{epoch+1}/{config.num_epochs}] 完成")
-        print(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
-        print(f"验证 - Loss: {avg_val_loss:.4f}, Acc: {val_acc:.2f}%")
-        print("-" * 60)
+        logging.info(f"Epoch [{epoch+1}/{config.num_epochs}] 完成")
+        logging.info(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
+        logging.info(f"验证 - Loss: {avg_val_loss:.4f}, Acc: {val_acc:.2f}%")
+        logging.info("-" * 60)
 
         # 保存最佳模型
         if val_acc > best_val_acc:
@@ -262,12 +275,12 @@ def train(config: Config):
         },
     )
 
-    print(f"\n训练完成！")
-    print(f"最佳验证准确率: {best_val_acc:.2f}%")
-    print(f"最终模型保存在: {final_model_path}")
-    print(f"TensorBoard日志: {log_path}")
-    print("运行以下命令查看训练过程:")
-    print(f"tensorboard --logdir {log_path}")
+    logging.info(f"\n训练完成！")
+    logging.info(f"最佳验证准确率: {best_val_acc:.2f}%")
+    logging.info(f"最终模型保存在: {final_model_path}")
+    logging.info(f"TensorBoard日志: {config.output_dir}")
+    logging.info("运行以下命令查看训练过程:")
+    logging.info(f"tensorboard --logdir {config.output_dir}")
 
     writer.close()
 
@@ -324,9 +337,13 @@ def evaluate_model(model_path: str, config: Config):
                 action_counts[action_idx] += 1
 
     accuracy = 100.0 * correct / total
-    print(f"测试准确率: {accuracy:.2f}%")
-    print(f"动作0预测数量: {action_counts[0]} ({100.0*action_counts[0]/total:.1f}%)")
-    print(f"动作1预测数量: {action_counts[1]} ({100.0*action_counts[1]/total:.1f}%)")
+    logging.info(f"测试准确率: {accuracy:.2f}%")
+    logging.info(
+        f"动作0预测数量: {action_counts[0]} ({100.0*action_counts[0]/total:.1f}%)"
+    )
+    logging.info(
+        f"动作1预测数量: {action_counts[1]} ({100.0*action_counts[1]/total:.1f}%)"
+    )
 
     return accuracy
 
@@ -335,16 +352,16 @@ if __name__ == "__main__":
     # 使用tyro解析命令行参数
     config = tyro.cli(Config)
 
-    print("=" * 60)
-    print("FlappyBird 监督学习训练")
-    print("=" * 60)
-    print(f"配置:")
-    print(f"  数据路径: {config.data_path}")
-    print(f"  批次大小: {config.batch_size}")
-    print(f"  学习率: {config.learning_rate}")
-    print(f"  训练轮数: {config.num_epochs}")
-    print(f"  设备: {device}")
-    print("=" * 60)
+    logging.info("=" * 60)
+    logging.info("FlappyBird 监督学习训练")
+    logging.info("=" * 60)
+    logging.info(f"配置:")
+    logging.info(f"  数据路径: {config.data_path}")
+    logging.info(f"  批次大小: {config.batch_size}")
+    logging.info(f"  学习率: {config.learning_rate}")
+    logging.info(f"  训练轮数: {config.num_epochs}")
+    logging.info(f"  设备: {device}")
+    logging.info("=" * 60)
 
     # 开始训练
     train(config)

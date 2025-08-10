@@ -7,11 +7,13 @@ class Thinking(nn.Module):
 
         self.feal_dim = config_dict.get("feal_dim", 128)
         self.action_dim = config_dict.get("action_dim", 2)
+        self.channel_dim = config_dict.get("channel_dim", 4)
 
         output_dim = self.feal_dim * 2 + self.action_dim
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(4, 32, kernel_size=8, stride=4), nn.ReLU(inplace=True)
+            nn.Conv2d(self.channel_dim, 32, kernel_size=8, stride=4),
+            nn.ReLU(inplace=True),
         )
         self.conv2 = nn.Sequential(
             nn.Conv2d(32, 64, kernel_size=4, stride=2), nn.ReLU(inplace=True)
@@ -31,11 +33,11 @@ class Thinking(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, input):  # (1, 4, 84, 84)
-        output = self.conv1(input)
-        output = self.conv2(output)  # (1, 32, 20, 20)
-        output = self.conv3(output)  # (1, 64, 9, 9)
-        output = output.view(output.size(0), -1)  # (1, 64, 7, 7)
-        output = self.fc1(output)  # (1, 3136)
-        output = self.fc2(output)  # (1, 512)
+        output = self.conv1(input)  # (1, 32, 20, 20)
+        output = self.conv2(output)  # (1, 64, 9, 9)
+        output = self.conv3(output)  # (1, 64, 7, 7)
+        output = output.view(output.size(0), -1)  # (B, 3136)
+        output = self.fc1(output)  # (1, 512)
+        output = self.fc2(output)  # (1, 2)
 
-        return output  # (1, 2)
+        return output
