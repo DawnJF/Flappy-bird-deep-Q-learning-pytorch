@@ -3,6 +3,7 @@ import time
 import cv2
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
 
 
@@ -61,3 +62,38 @@ def save_np_as_image(array, save_path="outputs/test_images"):
     pil_image.save(full_path)
 
     return full_path
+
+
+def save_model(model: nn.Module, save_path, config_dict, attr_dict):
+    """
+    保存模型和配置
+    """
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "config": config_dict,
+            "attrs": attr_dict,
+        },
+        save_path,
+    )
+
+
+def load_model(class_name, model_path):
+    # check model_path
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+
+    cp = torch.load(model_path, weights_only=False)
+
+    sd = cp["model_state_dict"]
+    attr_dict = cp["attrs"]
+    config_dict = cp["config"]
+    print("*" * 60)
+    print(f"Loaded model from: {model_path}")
+    print(f"config_dict: {config_dict}")
+    print(f"attr_dict: {attr_dict}")
+    print("*" * 60)
+
+    model = class_name(config_dict)
+    model.load_state_dict(sd)
+    return model

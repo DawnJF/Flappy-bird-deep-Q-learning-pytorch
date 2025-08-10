@@ -1,13 +1,14 @@
 import torch.nn as nn
 
 
-class DeepQNetwork(nn.Module):
-    def __init__(self, feal_dim=128, action_dim=2):
-        super(DeepQNetwork, self).__init__()
-        self.feal_dim = feal_dim
-        self.action_dim = action_dim
+class Thinking(nn.Module):
+    def __init__(self, config_dict):
+        super(Thinking, self).__init__()
 
-        output_dim = feal_dim * 2 + action_dim
+        self.feal_dim = config_dict.get("feal_dim", 128)
+        self.action_dim = config_dict.get("action_dim", 2)
+
+        output_dim = self.feal_dim * 2 + self.action_dim
 
         self.conv1 = nn.Sequential(
             nn.Conv2d(4, 32, kernel_size=8, stride=4), nn.ReLU(inplace=True)

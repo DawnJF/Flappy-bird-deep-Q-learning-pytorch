@@ -6,7 +6,7 @@ import torch.nn as nn
 
 
 class DeepQNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super(DeepQNetwork, self).__init__()
 
         self.conv1 = nn.Sequential(

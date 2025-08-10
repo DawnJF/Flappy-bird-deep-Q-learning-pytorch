@@ -6,8 +6,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
+from src.net.deep_q_network import DeepQNetwork
+from src.net.thinking import Thinking
 from src.flappy_bird import FlappyBird
-from src.utils import get_device, save_np_as_image
+from src.utils import get_device, load_model, save_np_as_image
 from src.obs_processor import ObsProcessor
 from src.dataset import HDF5DataSaver
 
@@ -19,13 +21,15 @@ class Args:
     image_size: int = 84
     """The common width and height for all images"""
 
-    model_path: str = "outputs/trained_models/flappy_bird_800000"
-    """Path to the trained model"""
+    # model_path: str = "outputs/trained_models/dqn_2000000"
+    # model_name = DeepQNetwork
+    model_path: str = "outputs/supervised/final_model_20250810_021825.pth"
+    model_name = Thinking
 
     max_steps: int = 10000000000
     """Maximum steps per test episode"""
 
-    save_data: bool = True
+    save_data: bool = False
     """Save test data and results"""
 
     output_dir: str = "outputs/dataset"
@@ -35,15 +39,13 @@ class Args:
 class TestRunner:
     def __init__(
         self,
-        model_path: str,
-        image_size: int = 84,
-        save_data: bool = False,
-        output_dir: str = "test_results",
+        args,
     ):
-        self.model_path = model_path
-        self.image_size = image_size
-        self.save_data = save_data
-        self.output_dir = output_dir
+        self.args = args
+        self.model_path = args.model_path
+        self.image_size = args.image_size
+        self.save_data = args.save_data
+        self.output_dir = args.output_dir
         self.data_saver = None
 
         if self.save_data:
@@ -72,7 +74,7 @@ class TestRunner:
 
         # Data collection
         self.test_data = {
-            "model_path": model_path,
+            "model_path": self.model_path,
             "start_time": datetime.now().isoformat(),
             "steps_data": [],  # Store obs and actions for each step
         }
@@ -80,10 +82,7 @@ class TestRunner:
     def _load_model(self):
         """Load the trained model"""
         print(f"Loading model: {self.model_path}")
-        model = torch.load(
-            self.model_path,
-            weights_only=False,
-        )
+        model = load_model(self.args.model_name, self.model_path)
         model.eval()
         model.to(self.device)
         return model
@@ -150,12 +149,7 @@ class TestRunner:
 def main():
     args = tyro.cli(Args)
 
-    tester = TestRunner(
-        model_path=args.model_path,
-        image_size=args.image_size,
-        save_data=args.save_data,
-        output_dir=args.output_dir,
-    )
+    tester = TestRunner(args)
 
     try:
         tester.run_test(args.max_steps)
