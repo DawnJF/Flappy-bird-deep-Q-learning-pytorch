@@ -5,9 +5,11 @@ class Thinking(nn.Module):
     def __init__(self, config_dict):
         super(Thinking, self).__init__()
 
-        self.feal_dim = config_dict.get("feal_dim", 128)
-        self.action_dim = config_dict.get("action_dim", 2)
-        self.channel_dim = config_dict.get("channel_dim", 4)
+        self.config = config_dict
+
+        self.feal_dim = self.config.get("feal_dim", 128)
+        self.action_dim = self.config.get("action_dim", 2)
+        self.channel_dim = self.config.get("channel_dim", 4)
 
         output_dim = self.feal_dim * 2 + self.action_dim
 

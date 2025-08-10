@@ -23,7 +23,9 @@ class Args:
 
     # model_path: str = "outputs/trained_models/dqn_2000000"
     # model_name = DeepQNetwork
-    model_path: str = "outputs/supervised/final_model_20250810_021825.pth"
+    model_path: str = (
+        "outputs/supervised/train_2025_0810_184220/final_model_2025_0810_184220.pth"
+    )
     model_name = Thinking
 
     max_steps: int = 10000000000
@@ -67,6 +69,7 @@ class TestRunner:
 
         # Initialize state processor
         self.state_processor = ObsProcessor(
+            stack_size=self.model.config.get("channel_dim", 4),
             original_image_size=(self.env.screen_width, int(self.env.base_y)),
             target_image_size=self.image_size,
             device=self.device,
