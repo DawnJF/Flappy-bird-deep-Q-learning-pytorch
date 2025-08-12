@@ -6,8 +6,9 @@ import torch.nn as nn
 
 
 class DeepQNetwork(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config={}):
         super(DeepQNetwork, self).__init__()
+        self.config = config
 
         self.conv1 = nn.Sequential(
             nn.Conv2d(4, 32, kernel_size=8, stride=4), nn.ReLU(inplace=True)

@@ -2,7 +2,7 @@ import torch.nn as nn
 
 
 class Thinking(nn.Module):
-    def __init__(self, config_dict):
+    def __init__(self, config_dict={}):
         super(Thinking, self).__init__()
 
         self.config = config_dict
