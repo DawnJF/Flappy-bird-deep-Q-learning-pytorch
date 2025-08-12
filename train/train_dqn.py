@@ -1,34 +1,20 @@
-"""
-@author: Viet Nguyen <nhviet1009@gmail.com>
-"""
-
 import argparse
 import os
 import shutil
 from random import random, randint, sample
-
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 
-from net.deep_q_network import DeepQNetwork
+sys.path.append(os.getcwd())
+from src.net.deep_q_network import DeepQNetwork
 from src.flappy_bird import FlappyBird
-from src.utils import pre_processing
+from src.utils import get_device, pre_processing
 
 
-# 检查 MPS 是否可用
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-    print("MPS is available !!!")
-elif torch.cuda.is_available():
-    device = torch.device("cuda")
-    print("CUDA is available !!!")
-else:
-    device = torch.device("cpu")
-    print("CPU used !!!")
-
-# device = torch.device("cpu")
+device = get_device()
 
 
 def get_args():
@@ -66,10 +52,6 @@ def get_args():
 
 
 def train(opt):
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(123)
-    else:
-        torch.manual_seed(123)
     model = DeepQNetwork()
     target_model = DeepQNetwork().to(device)  # 定义目标网络
     target_model.load_state_dict(model.state_dict())  # 初始化目标网络
