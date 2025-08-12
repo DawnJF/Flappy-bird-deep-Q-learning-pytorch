@@ -1,4 +1,3 @@
-import argparse
 import os
 import shutil
 from random import random, randint, sample
@@ -7,85 +6,91 @@ import numpy as np
 import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
+from dataclasses import dataclass
+import tyro
 
 sys.path.append(os.getcwd())
 from src.net.deep_q_network import DeepQNetwork
-from src.flappy_bird import FlappyBird
-from src.utils import get_device, pre_processing
+from src.flappy_bird_env import FlappyBirdEnv
+from src.obs_processor import ObsProcessor
+from src.utils import get_device
 
 
-device = get_device()
+@dataclass
+class TrainingConfig:
+    """Configuration for Deep Q Network training to play Flappy Bird"""
+
+    image_size: int = 84
+    """The common width and height for all images"""
+
+    batch_size: int = 24
+    """The number of images per batch"""
+
+    optimizer: str = "adam"
+    """Optimizer choice: sgd or adam"""
+
+    lr: float = 1e-6
+
+    gamma: float = 0.99
+    """Discount factor"""
+
+    initial_epsilon: float = 0.2
+    """Initial epsilon for exploration"""
+
+    final_epsilon: float = 1e-4
+    """Final epsilon for exploration"""
+
+    num_iters: int = 1000000
+    """Number of training iterations"""
+
+    replay_memory_size: int = 5000
+    """Number of experiences to store in replay memory"""
+
+    output_path: str = "outputs/dqn"
+    """Path for tensorboard logs"""
 
 
-def get_args():
-    parser = argparse.ArgumentParser(
-        """Implementation of Deep Q Network to play Flappy Bird"""
-    )
-    parser.add_argument(
-        "--image_size",
-        type=int,
-        default=84,
-        help="The common width and height for all images",
-    )
-    parser.add_argument(
-        "--batch_size", type=int, default=24, help="The number of images per batch"
-    )
-    parser.add_argument(
-        "--optimizer", type=str, choices=["sgd", "adam"], default="adam"
-    )
-    parser.add_argument("--lr", type=float, default=1e-6)
-    parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--initial_epsilon", type=float, default=0.2)
-    parser.add_argument("--final_epsilon", type=float, default=1e-4)
-    parser.add_argument("--num_iters", type=int, default=1000000)
-    parser.add_argument(
-        "--replay_memory_size",
-        type=int,
-        default=5000,
-        help="Number of epoches between testing phases",
-    )
-    parser.add_argument("--log_path", type=str, default="output")
-    parser.add_argument("--saved_path", type=str, default="trained_models/net_2")
+def train(opt: TrainingConfig):
 
-    args = parser.parse_args()
-    return args
+    device = get_device()
 
-
-def train(opt):
     model = DeepQNetwork()
     target_model = DeepQNetwork().to(device)  # 定义目标网络
     target_model.load_state_dict(model.state_dict())  # 初始化目标网络
 
-    if os.path.isdir(opt.log_path):
-        shutil.rmtree(opt.log_path)
-    os.makedirs(opt.log_path)
-    writer = SummaryWriter(opt.log_path)
+    if os.path.isdir(opt.output_path):
+        shutil.rmtree(opt.output_path)
+    os.makedirs(opt.output_path)
+
+    writer = SummaryWriter(opt.output_path)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     criterion = nn.MSELoss()
-    game_state = FlappyBird()
-    image, reward, terminal = game_state.next_frame(0)
-    image = pre_processing(
-        image[: game_state.screen_width, : int(game_state.base_y)],
-        opt.image_size,
-        opt.image_size,
+
+    env = FlappyBirdEnv()
+    obs, _ = env.reset()
+
+    state_processor = ObsProcessor(
+        stack_size=4,
+        original_image_size=obs.shape[:2],
+        target_image_size=opt.image_size,
+        device=device,
     )
-    image = torch.from_numpy(image)
 
     model = model.to(device)
-    image = image.to(device)
 
-    # 在深度强化学习中，通常使用一个序列帧来描述环境的状态，帮助模型捕捉动态变化。这里假设一开始所有帧都是相同的。
-    # image: (84, 84)
-    # state: (1, 4, 84, 84)
-    state = torch.cat(tuple(image for _ in range(4)))[None, :, :, :]
+    # 初始化状态
+    state = state_processor.initialize_state(obs)
 
     replay_memory = []
     iter = 0
+    episode_steps = 0  # 记录当前游戏的步数
     target_update_freq = 1000  # 每隔 1000 步更新一次目标网络
 
     while iter < opt.num_iters:
         prediction = model(state)[0]
+        print("Prediction: ", prediction)
+
         # Exploration or exploitation
         epsilon = opt.final_epsilon + (
             (opt.num_iters - iter)
@@ -96,22 +101,14 @@ def train(opt):
         random_action = u <= epsilon
         if random_action:
             print("Perform a random action")
-            action = 1 if random() <= 0.1 else 0
-            # action = randint(0, 1)
+            # action = 1 if random() <= 0.1 else 0
+            action = randint(0, 1)
         else:
-
             action = torch.argmax(prediction).item()
 
-        next_image, reward, terminal = game_state.next_frame(action)
-        next_image = pre_processing(
-            next_image[: game_state.screen_width, : int(game_state.base_y)],
-            opt.image_size,
-            opt.image_size,
-        )
-        next_image = torch.from_numpy(next_image)
-
-        next_image = next_image.to(device)
-        next_state = torch.cat((state[0, 1:, :, :], next_image))[None, :, :, :]
+        next_obs, reward, terminal, truncated, info = env.step(action)
+        next_state = state_processor.update_state(next_obs)
+        episode_steps += 1  # 增加步数计数
 
         replay_memory.append([state, action, reward, next_state, terminal])
         if len(replay_memory) > opt.replay_memory_size:
@@ -164,7 +161,16 @@ def train(opt):
         if iter % target_update_freq == 0:
             target_model.load_state_dict(model.state_dict())
 
-        state = next_state
+        # 如果游戏结束，重置环境
+        if terminal or truncated:
+            print(f"Episode ended after {episode_steps} steps")
+            writer.add_scalar("Train/Episode_Steps", episode_steps, iter)
+            episode_steps = 0  # 重置步数计数
+            obs, _ = env.reset()
+            state = state_processor.initialize_state(obs)
+        else:
+            state = next_state
+
         iter += 1
         print(
             "Iteration: {}/{}, Action: {}, Loss: {}, Epsilon {}, Reward: {}, Q-value: {}".format(
@@ -182,10 +188,11 @@ def train(opt):
         writer.add_scalar("Train/Reward", reward, iter)
         writer.add_scalar("Train/Q-value", torch.max(prediction), iter)
         if (iter + 1) % 200000 == 0:
-            torch.save(model, "{}/flappy_bird_{}".format(opt.saved_path, iter + 1))
-    torch.save(model, "{}/flappy_bird".format(opt.saved_path))
+            torch.save(model, "{}/flappy_bird_{}".format(opt.output_path, iter + 1))
+    torch.save(model, "{}/flappy_bird".format(opt.output_path))
+    env.close()
 
 
 if __name__ == "__main__":
-    opt = get_args()
+    opt = tyro.cli(TrainingConfig)
     train(opt)
