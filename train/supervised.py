@@ -38,8 +38,7 @@ class Config:
     logging_freq: int = 200
 
     # 模型参数
-    action_dim: int = 2
-    feal_dim: int = 0
+    output_dim: int = 2
     channel_dim: int = 1
 
     output_dir: str = "outputs/supervised"
@@ -122,8 +121,9 @@ class FlappyBirdDataset(Dataset):
 class BaseModel(ABC):
     """模型训练细节抽象基类"""
 
-    def __init__(self, config):
+    def __init__(self, config, device):
         self.config = config
+        self.device = device
 
     @abstractmethod
     def forward(self, x):
@@ -135,10 +135,6 @@ class BaseModel(ABC):
 
     def backward(self, loss):
         loss.backward()
-
-    def to(self, device):
-        # 需要子类实现
-        raise NotImplementedError
 
     def parameters(self):
         # 需要子类实现
@@ -164,24 +160,19 @@ class BaseModel(ABC):
 class ThinkingModel(BaseModel):
     """具体模型实现，封装了Thinking网络"""
 
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = Thinking(config)
+    def __init__(self, config, device):
+        super().__init__(config, device)
+        self.model = Thinking(config).to(device)
         self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x):
         return self.model(x)
 
     def compute_loss(self, outputs, targets):
-        action_logits = outputs[:, -self.config["action_dim"] :]
-        return self.criterion(action_logits, targets)
+        return self.criterion(outputs, targets)
 
     def backward(self, loss):
         loss.backward()
-
-    def to(self, device):
-        self.model = self.model.to(device)
-        return self
 
     def parameters(self):
         return self.model.parameters()
@@ -294,8 +285,7 @@ class SupervisedTrainer:
                 loss = model.compute_loss(outputs, actions_batch)
                 total_loss += loss.item()
 
-                action_logits = outputs[:, -self.config.action_dim :]
-                _, predicted = torch.max(action_logits.data, 1)
+                _, predicted = torch.max(outputs.data, 1)
                 total += actions_batch.size(0)
                 correct += (predicted == actions_batch).sum().item()
 
@@ -365,7 +355,7 @@ class SupervisedTrainer:
     def setup_training(self):
         """设置训练组件"""
         # 创建模型
-        self.model = self.model_class(asdict(self.config)).to(self.device)
+        self.model = self.model_class(asdict(self.config), self.device)
 
         # 优化器
         self.optimizer = optim.Adam(
@@ -447,13 +437,14 @@ class SupervisedTrainer:
             # 前向和反向传播
             self.optimizer.zero_grad()
             outputs = self.model.forward(observations_batch)
+
             loss = self.model.compute_loss(outputs, actions_batch)
             self.model.backward(loss)
+
             self.optimizer.step()
 
             # 更新统计信息
-            action_logits = outputs[:, -self.config.action_dim :]
-            _, predicted = torch.max(action_logits.data, 1)
+            _, predicted = torch.max(outputs.data, 1)
             correct = (predicted == actions_batch).sum().item()
             total = actions_batch.size(0)
             self.training_state.update_train_stats(loss.item(), correct, total)

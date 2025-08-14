@@ -101,8 +101,8 @@ def train(opt: TrainingConfig):
         random_action = u <= epsilon
         if random_action:
             print("Perform a random action")
-            # action = 1 if random() <= 0.1 else 0
-            action = randint(0, 1)
+            action = 1 if random() <= 0.1 else 0
+            # action = randint(0, 1)
         else:
             action = torch.argmax(prediction).item()
 

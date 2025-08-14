@@ -7,11 +7,10 @@ class Thinking(nn.Module):
 
         self.config = config_dict
 
-        self.feal_dim = self.config.get("feal_dim", 128)
-        self.action_dim = self.config.get("action_dim", 2)
+        self.output_dim = self.config.get("output_dim", 2)
         self.channel_dim = self.config.get("channel_dim", 4)
 
-        output_dim = self.feal_dim * 2 + self.action_dim
+        output_dim = self.output_dim
 
         self.conv1 = nn.Sequential(
             nn.Conv2d(self.channel_dim, 32, kernel_size=8, stride=4),
