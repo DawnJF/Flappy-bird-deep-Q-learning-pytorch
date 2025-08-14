@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
+from src.net.jepa_thinking import JepaThinking
 from src.net.deep_q_network import DeepQNetwork
 from src.net.thinking import Thinking
 from src.flappy_bird import FlappyBird
@@ -21,10 +22,12 @@ class Args:
     image_size: int = 84
     """The common width and height for all images"""
 
-    model_path: str = "outputs/trained_models/dqn_2000000"
-    model_name = DeepQNetwork
+    # model_path: str = "outputs/trained_models/dqn_2000000"
+    # model_name = DeepQNetwork
     # model_path: str = "outputs/supervised/train_2025_0811_001512/best_model_2000.pth"
     # model_name = Thinking
+    model_path: str = "outputs/jepa_v1/train_2025_0814_235512/final_model_4000.pth"
+    model_name = JepaThinking
 
     max_steps: int = 10000000000
     """Maximum steps per test episode"""

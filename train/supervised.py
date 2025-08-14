@@ -129,11 +129,11 @@ class BaseModel(ABC):
         self.device = device
 
     @abstractmethod
-    def forward(self, x):
+    def forward(self, batch):
         pass
 
     @abstractmethod
-    def compute_loss(self, outputs, targets):
+    def compute_loss(self, outputs, batch):
         pass
 
     def backward(self, loss):
@@ -168,11 +168,13 @@ class ThinkingModel(BaseModel):
         self.model = Thinking(config).to(device)
         self.criterion = nn.CrossEntropyLoss()
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, batch):
+        x = batch[0]
+        return (self.model(x),)
 
-    def compute_loss(self, outputs, targets):
-        return self.criterion(outputs, targets)
+    def compute_loss(self, outputs, batch):
+        targets = batch[1]
+        return self.criterion(outputs[0], targets)
 
     def backward(self, loss):
         loss.backward()
@@ -273,25 +275,27 @@ class SupervisedTrainer:
 
         return observations
 
-    def evaluate_model_accuracy(self, model, data_loader):
+    def evaluate_model_accuracy(self):
         """评估模型准确率和损失"""
+        data_loader = self.val_loader
+        model = self.model
         model.eval()
         total_loss = 0.0
         correct = 0
         total = 0
 
         with torch.no_grad():
-            for observations_batch, actions_batch in data_loader:
-                observations_batch = observations_batch.to(self.device)
-                actions_batch = actions_batch.to(self.device)
+            for batch in data_loader:
+                for i in range(len(batch)):
+                    batch[i] = batch[i].to(self.device)
 
-                outputs = model.forward(observations_batch)
-                loss = model.compute_loss(outputs, actions_batch)
+                outputs = model.forward(batch)
+                loss = model.compute_loss(outputs, batch)
                 total_loss += loss.item()
 
-                _, predicted = torch.max(outputs.data, 1)
-                total += actions_batch.size(0)
-                correct += (predicted == actions_batch).sum().item()
+                _, predicted = torch.max(outputs[0].data, 1)
+                total += batch[-1].size(0)
+                correct += (predicted == batch[-1]).sum().item()
 
         avg_loss = total_loss / len(data_loader)
         accuracy = 100.0 * correct / total
@@ -397,9 +401,7 @@ class SupervisedTrainer:
         train_acc = self.training_state.get_train_accuracy()
 
         # 验证
-        avg_val_loss, val_acc = self.evaluate_model_accuracy(
-            self.model, self.val_loader
-        )
+        avg_val_loss, val_acc = self.evaluate_model_accuracy()
 
         # 记录epoch级别的指标到TensorBoard
         self.log_training_metrics(avg_train_loss, train_acc, avg_val_loss, val_acc)
@@ -444,23 +446,25 @@ class SupervisedTrainer:
 
             # 训练一步
             self.model.train()
-            observations_batch, actions_batch = next(train_iter)
-            observations_batch = observations_batch.to(self.device)
-            actions_batch = actions_batch.to(self.device)
+            batch = next(train_iter)
+
+            """ Note: batch[-1] is label """
+            for i in range(len(batch)):
+                batch[i] = batch[i].to(self.device)
 
             # 前向和反向传播
             self.optimizer.zero_grad()
-            outputs = self.model.forward(observations_batch)
+            outputs = self.model.forward(batch)
 
-            loss = self.model.compute_loss(outputs, actions_batch)
+            loss = self.model.compute_loss(outputs, batch)
             self.model.backward(loss)
 
             self.optimizer.step()
 
             # 更新统计信息
-            _, predicted = torch.max(outputs.data, 1)
-            correct = (predicted == actions_batch).sum().item()
-            total = actions_batch.size(0)
+            _, predicted = torch.max(outputs[0].data, 1)
+            correct = (predicted == batch[-1]).sum().item()
+            total = batch[-1].size(0)
             self.training_state.update_train_stats(loss.item(), correct, total)
 
             # 记录到TensorBoard
@@ -483,9 +487,7 @@ class SupervisedTrainer:
                 self.training_state.reset_epoch_stats()
 
         # 保存最终模型
-        avg_val_loss, val_acc = self.evaluate_model_accuracy(
-            self.model, self.val_loader
-        )
+        avg_val_loss, val_acc = self.evaluate_model_accuracy()
         self.save_model_checkpoint(checkpoint_type="final")
 
         self.writer.close()
@@ -522,7 +524,7 @@ class SupervisedTrainer:
         model.load_state_dict(checkpoint["model_state_dict"])
 
         # 评估
-        avg_loss, accuracy = self.evaluate_model_accuracy(model, test_loader)
+        avg_loss, accuracy = self.evaluate_model_accuracy()
 
         # 统计动作分布
         action_counts = {0: 0, 1: 0}
@@ -550,7 +552,6 @@ class SupervisedTrainer:
         return accuracy
 
 
-# Remove the old standalone functions and update the train function
 def train(config: Config):
     """训练模型"""
     trainer = SupervisedTrainer(config)

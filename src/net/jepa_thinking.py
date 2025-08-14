@@ -1,17 +1,17 @@
-from net.thinking import Thinking
+from src.net.thinking import Thinking
 import torch.nn as nn
 
 
 class JepaThinking(nn.Module):
-    def __init__(self, config_dict={}):
+    def __init__(self, config={}):
         super(JepaThinking, self).__init__()
-        self.config_dict = config_dict
+        self.config = config
 
-        self.output_dim = self.config_dict.pop("output_dim", 2)
-        self.feal_dim = self.config_dict.get("feal_dim", 128)
-        self.config_dict["output_dim"] = self.feal_dim
+        self.output_dim = self.config.pop("output_dim", 2)
+        self.feal_dim = self.config.get("feal_dim", 128)
+        self.config["output_dim"] = self.feal_dim
 
-        self.feal = Thinking(config_dict)
+        self.feal = Thinking(self.config)
 
         pred_dim = 64
 
@@ -19,10 +19,9 @@ class JepaThinking(nn.Module):
             nn.Linear(self.feal_dim, pred_dim, bias=False),
             nn.BatchNorm1d(pred_dim),
             nn.ReLU(inplace=True),  # hidden layer
-            nn.Linear(pred_dim, self.output_dim),
+            nn.Linear(pred_dim, self.feal_dim),
         )  # output layer
 
-    def forward(self, x, x1):
+    def forward(self, x):
         x = self.feal(x)
-        x1 = self.feal(x1)
-        return self.predictor(x), x1
+        return x[:, -self.output_dim :]
