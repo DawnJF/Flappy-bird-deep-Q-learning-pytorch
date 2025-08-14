@@ -26,6 +26,9 @@ from src.net.thinking import Thinking
 class Config:
     # 数据路径
     data_path: str = (
+        "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250808_005810.h5"
+    )
+    eval_data_path: str = (
         "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
     )
     data_size: int = 20000
@@ -193,11 +196,12 @@ class ThinkingModel(BaseModel):
 class SupervisedTrainer:
     """FlappyBird 监督学习训练器"""
 
-    def __init__(self, config: Config, model_class=None):
+    def __init__(self, config: Config, model_class=None, dataset_class=None):
         self.config = config
         self.device = get_device()
         self.training_state = TrainingState()
         self.model_class = model_class or ThinkingModel
+        self.dataset_class = dataset_class or FlappyBirdDataset
 
         # 设置输出目录
         timestamp = datetime.now().strftime("%Y_%m%d_%H%M%S")
@@ -308,8 +312,9 @@ class SupervisedTrainer:
             self.writer.add_scalar("Epoch/Val_Loss", val_loss, epoch)
             self.writer.add_scalar("Epoch/Val_Accuracy", val_acc, epoch)
 
-    def load_and_preprocess_dataset(self):
+    def prepare_training_loader(self):
         """加载和预处理数据集"""
+        logging.info("**** 加载和预处理: 训练数据集 ****")
         # 加载数据
         data = load_data(self.config.data_path)
         logging.info(f"data len: {len(data['observations'])}")
@@ -319,12 +324,12 @@ class SupervisedTrainer:
             if self.config.data_size > 0
             else len(data["observations"])
         )
+        logging.info(f"使用数据样本数量: {data_size}")
         observations = data["observations"][:data_size]
         actions = data["actions"][:data_size]
 
         logging.info(f"观测数据形状: {observations.shape}")
         logging.info(f"动作数据形状: {actions.shape}")
-        logging.info(f"数据样本数量: {len(observations)}")
 
         # 使用预处理函数
         observations = self.preprocess_observations(
@@ -333,23 +338,32 @@ class SupervisedTrainer:
         logging.info(f"预处理后观测数据形状: {observations.shape}")
 
         # 创建数据集和数据加载器
-        dataset = FlappyBirdDataset(observations, actions)
-
-        # 划分训练和验证集
-        train_size = int(0.8 * len(dataset))
-        val_size = len(dataset) - train_size
-        train_dataset, val_dataset = torch.utils.data.random_split(
-            dataset, [train_size, val_size]
-        )
-
-        logging.info(f"训练集大小: {len(train_dataset)}")
-        logging.info(f"验证集大小: {len(val_dataset)}")
+        dataset = self.dataset_class(observations, actions)
 
         self.train_loader = DataLoader(
-            train_dataset, batch_size=self.config.batch_size, shuffle=True
+            dataset, batch_size=self.config.batch_size, shuffle=True
         )
+
+    def prepare_eval_loader(self):
+        logging.info("**** 加载和预处理: 验证数据集 ****")
+        data = load_data(self.config.eval_data_path)
+        logging.info(f"eval data len: {len(data['observations'])}")
+        observations = data["observations"]
+        actions = data["actions"]
+
+        # 使用预处理函数
+        observations = self.preprocess_observations(
+            observations, self.config.channel_dim
+        )
+        logging.info(f"预处理后观测数据形状: {observations.shape}")
+
+        # 创建数据集和数据加载器
+        dataset = self.dataset_class(observations, actions)
+
+        logging.info(f"验证集大小: {len(dataset)}")
+
         self.val_loader = DataLoader(
-            val_dataset, batch_size=self.config.batch_size, shuffle=False
+            dataset, batch_size=self.config.batch_size, shuffle=False
         )
 
     def setup_training(self):
@@ -375,7 +389,6 @@ class SupervisedTrainer:
         for key, value in asdict(self.config).items():
             logging.info(f"  {key}: {value}")
         logging.info("=" * 60)
-        logging.info(f"加载数据: {self.config.data_path}")
 
     def _perform_validation_and_save(self):
         """执行验证并保存模型"""
@@ -413,7 +426,8 @@ class SupervisedTrainer:
         self._log_training_info()
 
         # 加载数据和设置训练
-        self.load_and_preprocess_dataset()
+        self.prepare_training_loader()
+        self.prepare_eval_loader()
         self.setup_training()
 
         steps_per_epoch = len(self.train_loader)
