@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,6 +22,7 @@ class JepaThinkModelV1(BaseModel):
         self.action_dim = config["output_dim"]
         self.model = JepaThinking(config).to(device)
         self.criterion = nn.CrossEntropyLoss()
+        self.feal_criterion = nn.CosineSimilarity(dim=1)
 
     def forward(self, batch):
         x = batch[0]
@@ -41,14 +43,77 @@ class JepaThinkModelV1(BaseModel):
         )
 
     def compute_loss(self, outputs, batch):
-        feal_loss = self.criterion(outputs[1], outputs[2])
+        feal_loss = -self.feal_criterion(outputs[1], outputs[2]).mean()
         mask = batch[1]
 
         outputs_masked = outputs[0][mask]  # [N_mask, C]
         labels_masked = batch[-1][mask]  # [N_mask]
         action_mask_loss = self.criterion(outputs_masked, labels_masked)
 
-        return feal_loss + action_mask_loss
+        result = {
+            "loss": feal_loss + action_mask_loss,
+            "feal_loss": feal_loss,
+            "action_mask_loss": action_mask_loss,
+        }
+        return result
+
+    def parameters(self):
+        return self.model.parameters()
+
+    def train(self, mode=True):
+        self.model.train(mode)
+
+    def eval(self):
+        self.model.eval()
+
+    def load_state_dict(self, state_dict):
+        self.model.load_state_dict(state_dict)
+
+    def state_dict(self):
+        return self.model.state_dict()
+
+
+class JepaThinkModelV2(BaseModel):
+    """具体模型实现，封装了Thinking网络"""
+
+    def __init__(self, config, device):
+        super().__init__(config, device)
+        self.action_dim = config["output_dim"]
+        self.model = JepaThinking(config).to(device)
+        self.criterion = nn.CrossEntropyLoss()
+        self.feal_criterion = nn.CosineSimilarity(dim=1)
+
+    def forward(self, batch):
+        x = batch[0]
+        assert x.shape[1] == 2
+
+        p1 = self.model.feal(x[:, 0])
+        f1 = self.model.predictor(p1)
+
+        p2 = self.model.feal(x[:, 1])
+        p2 = p2.detach()
+
+        action = p1[:, -self.action_dim :]
+        return (
+            action,
+            f1,
+            p2,
+        )
+
+    def compute_loss(self, outputs, batch):
+        feal_loss = -self.feal_criterion(outputs[1], outputs[2]).mean()
+        mask = batch[1]
+
+        outputs_masked = outputs[0][mask]  # [N_mask, C]
+        labels_masked = batch[-1][mask]  # [N_mask]
+        action_mask_loss = self.criterion(outputs_masked, labels_masked)
+
+        result = {
+            "loss": feal_loss + action_mask_loss,
+            "feal_loss": feal_loss,
+            "action_mask_loss": action_mask_loss,
+        }
+        return result
 
     def parameters(self):
         return self.model.parameters()
@@ -81,6 +146,8 @@ class FlappyBirdJepaDataset(Dataset):
         true_indices = np.random.choice(length, size=length // 10, replace=False)
         keep_actions[true_indices] = True
 
+        logging.info(f"保留的动作 size: {keep_actions.sum()}")
+
         for i in range(length):
             action = actions[i]
             obs = np.expand_dims(observations[i], axis=0)
@@ -105,10 +172,12 @@ class FlappyBirdJepaDataset(Dataset):
 
 @dataclass
 class Config(supervised.Config):
-    model_class = JepaThinkModelV1
+    model_class = JepaThinkModelV2
     dataset_class = FlappyBirdJepaDataset
 
     output_dir: str = "outputs/jepa_v1"
+
+    num_step: int = 4000
 
 
 def train(config: Config):

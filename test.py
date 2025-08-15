@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 import tyro
 import torch
 import os
@@ -23,10 +24,11 @@ class Args:
     """The common width and height for all images"""
 
     # model_path: str = "outputs/trained_models/dqn_2000000"
+    # model_path: str = "outputs/dqn/flappy_bird_1000000"
     # model_name = DeepQNetwork
-    # model_path: str = "outputs/supervised/train_2025_0811_001512/best_model_2000.pth"
+    # model_path: str = "outputs/supervised/train_2025_0815_170228/best_model_2000.pth"
     # model_name = Thinking
-    model_path: str = "outputs/jepa_v1/train_2025_0814_235512/final_model_4000.pth"
+    model_path: str = "outputs/compare/train_2025_0815_165647/final_model_4000.pth"
     model_name = JepaThinking
 
     max_steps: int = 10000000000
@@ -150,6 +152,45 @@ class TestRunner:
         }
 
 
+def evaluate_models(model_info_list, num_episodes=10, max_steps=None, verbose=False):
+    """
+    Evaluate a list of models, each for num_episodes, and return average steps for each.
+
+    Args:
+        model_info_list: List of tuples (model_name, model_path)
+        num_episodes: Number of episodes per model
+        max_steps: Max steps per episode
+        verbose: Print progress
+
+    Returns:
+        List of dicts: [{'model_name': ..., 'model_path': ..., 'avg_steps': ...}, ...]
+    """
+    results = []
+    for model_name, model_path in tqdm(model_info_list):
+        args = Args()
+        args.model_name = model_name
+        args.model_path = model_path
+        args.save_data = False  # 不保存数据
+        tester = TestRunner(args)
+        steps_list = []
+        for i in range(num_episodes):
+            if verbose:
+                print(f"Model: {model_name}, Episode: {i+1}/{num_episodes}")
+            res = tester.run_test(max_steps=max_steps, verbose=False)
+            steps_list.append(res["steps"])
+        avg_steps = np.mean(steps_list)
+        results.append(
+            {
+                "model_name": str(model_name),
+                "model_path": str(model_path),
+                "avg_steps": float(avg_steps),
+            }
+        )
+        if verbose:
+            print(f"Model: {model_name}/{model_path}, Avg Steps: {avg_steps}")
+    return results
+
+
 def main():
     args = tyro.cli(Args)
 
@@ -161,5 +202,27 @@ def main():
         del tester
 
 
+def test_models():
+    model_info_list = [
+        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_1000.pth"),
+        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_2000.pth"),
+        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_3000.pth"),
+        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_4000.pth"),
+        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_1000.pth"),
+        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_2000.pth"),
+        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_3000.pth"),
+        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_4000.pth"),
+        # ("Model3", "path/to/model3"),
+    ]
+
+    result = evaluate_models(model_info_list)
+    print("Evaluation Results:")
+    for res in result:
+        print(
+            f"Model: {res['model_name']}/{res['model_path']}, Avg Steps: {res['avg_steps']}"
+        )
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+    test_models()
