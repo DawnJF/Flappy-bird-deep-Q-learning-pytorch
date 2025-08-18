@@ -153,7 +153,7 @@ class FlappyBirdJepaDataset(Dataset):
     每个item包含当前obs和next obs
     """
 
-    def __init__(self, observations, actions):
+    def __init__(self, config, observations, actions):
         self.data = []
         length = len(observations) - 1
 
@@ -163,7 +163,7 @@ class FlappyBirdJepaDataset(Dataset):
 
         """ 跟监督学习实验保持一致, 带有action的数据相同"""
         true_indices = [False] * length
-        true_indices[:4000] = [True] * 4000
+        true_indices[: config.action_data_size] = [True] * config.action_data_size
 
         keep_actions[true_indices] = True
 
@@ -201,7 +201,7 @@ class Config(supervised.Config):
     data_size: int = 30000
     action_data_size: int = 3000
     channel_dim: int = 4
-    num_step: int = 7000
+    num_step: int = 8000
 
 
 def train(config: Config):

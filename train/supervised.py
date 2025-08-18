@@ -31,18 +31,18 @@ class Config:
     eval_data_path: str = (
         "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
     )
-    data_size: int = 30000
+    data_size: int = 3000
 
     # 训练参数
     batch_size: int = 128
     learning_rate: float = 1e-4
-    num_step: int = 4500
+    num_step: int = 7000
     save_freq: int = 400
     logging_freq: int = 200
 
     # 模型参数
     output_dim: int = 2
-    channel_dim: int = 1
+    channel_dim: int = 4
 
     name: str = "supervised"
     output_dir: str = "outputs/8-18"
@@ -137,7 +137,7 @@ class TrainingState:
 class FlappyBirdDataset(Dataset):
     """FlappyBird数据集"""
 
-    def __init__(self, observations, actions):
+    def __init__(self, config, observations, actions):
         self.observations = torch.FloatTensor(observations)
         self.actions = torch.LongTensor(actions)
 
@@ -369,7 +369,7 @@ class SupervisedTrainer:
         logging.info(f"预处理后观测数据形状: {observations.shape}")
 
         # 创建数据集和数据加载器
-        dataset = self.dataset_class(observations, actions)
+        dataset = self.dataset_class(self.config, observations, actions)
 
         logging.info(f"训练集大小: {len(dataset)}")
         self.train_loader = DataLoader(
@@ -390,7 +390,7 @@ class SupervisedTrainer:
         logging.info(f"预处理后观测数据形状: {observations.shape}")
 
         # 创建数据集和数据加载器
-        dataset = self.dataset_class(observations, actions)
+        dataset = self.dataset_class(self.config, observations, actions)
 
         logging.info(f"验证集大小: {len(dataset)}")
 
