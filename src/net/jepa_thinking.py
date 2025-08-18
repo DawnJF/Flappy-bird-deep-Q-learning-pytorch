@@ -11,17 +11,17 @@ class JepaThinking(nn.Module):
         self.feal_dim = self.config.get("feal_dim", 128)
         self.config["output_dim"] = self.feal_dim
 
-        self.feal = Thinking(self.config)
+        self.cognition = Thinking(self.config)
 
         pred_dim = 64
 
-        self.predictor = nn.Sequential(
+        self.forecast = nn.Sequential(
             nn.Linear(self.feal_dim, pred_dim, bias=False),
             nn.BatchNorm1d(pred_dim),
             nn.ReLU(inplace=True),  # hidden layer
-            nn.Linear(pred_dim, self.feal_dim),
+            nn.Linear(pred_dim, self.feal_dim - self.output_dim),
         )  # output layer
 
     def forward(self, x):
-        x = self.feal(x)
+        x = self.cognition(x)
         return x[:, -self.output_dim :]

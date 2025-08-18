@@ -45,7 +45,7 @@ class Config:
     channel_dim: int = 1
 
     name: str = "supervised"
-    output_dir: str = "outputs/8-17"
+    output_dir: str = "outputs/8-18"
 
 
 device = get_device()
@@ -371,6 +371,7 @@ class SupervisedTrainer:
         # 创建数据集和数据加载器
         dataset = self.dataset_class(observations, actions)
 
+        logging.info(f"训练集大小: {len(dataset)}")
         self.train_loader = DataLoader(
             dataset, batch_size=self.config.batch_size, shuffle=True
         )

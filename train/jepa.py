@@ -28,18 +28,18 @@ class JepaThinkModelV1(BaseModel):
         x = batch[0]
         assert x.shape[1] == 2
 
-        p1 = self.model.feal(x[:, 0])
-        f1 = self.model.predictor(p1)
+        cog1 = self.model.cognition(x[:, 0])
+        forecast1 = self.model.forecast(cog1)
 
-        p2 = self.model.feal(x[:, 1])
-        p2 = p2.detach()
-        f2 = self.model.predictor(p2)
+        cog2 = self.model.cognition(x[:, 1])
+        cog2 = cog2.detach()
+        forecast2 = self.model.forecast(cog2)
 
-        action = p1[:, -self.action_dim :]
+        action = cog1[:, -self.action_dim :]
         return (
             action,
-            f1,
-            f2,
+            forecast1,
+            forecast2,
         )
 
     def compute_loss(self, outputs, batch):
@@ -93,32 +93,36 @@ class JepaThinkModelV2(BaseModel):
         x = batch[0]
         assert x.shape[1] == 2
 
-        p1 = self.model.feal(x[:, 0])
-        f1 = self.model.predictor(p1)
+        cog1 = self.model.cognition(x[:, 0])
+        forecast1 = self.model.forecast(cog1)
 
-        p2 = self.model.feal(x[:, 1])
-        p2 = p2.detach()
+        cog2 = self.model.cognition(x[:, 1])
+        cog2 = cog2.detach()
 
-        action = p1[:, -self.action_dim :]
+        action = cog1[:, -self.action_dim :]
         return (
             action,
-            f1,
-            p2,
+            forecast1,
+            cog2,
         )
 
     def compute_loss(self, outputs, batch):
-        feal_loss = -self.feal_criterion(outputs[1], outputs[2]).mean()
+        action, forecast1, cog2 = outputs
+        cog2 = cog2[:, : -self.action_dim]
+
+        feal_loss = -self.feal_criterion(forecast1, cog2).mean()
 
         label = batch[-1]
-        output = outputs[0]
         if self.model.training:
             mask = batch[1]
-            output = output[mask]  # [N_mask, C]
+            action = action[mask]  # [N_mask, C]
             label = label[mask]  # [N_mask]
-        else:
-            logging.warning("模型未在训练模式下，使用全量数据计算loss")
+        # else:
+        #     logging.warning("模型未在训练模式下，使用全量数据计算loss")
 
-        action_loss = self.criterion(output, label)
+        action_loss = self.criterion(action, label)
+        if action_loss.isnan().any():
+            action_loss = torch.tensor(0.0, device=self.device)
 
         result = {
             "loss": feal_loss + action_loss,
@@ -196,12 +200,14 @@ class Config(supervised.Config):
 
     data_size: int = 30000
     action_data_size: int = 3000
+    channel_dim: int = 4
+    num_step: int = 7000
 
 
 def train(config: Config):
     """训练模型"""
     trainer = SupervisedTrainer(
-        config, model_class=JepaThinkModelV1, dataset_class=FlappyBirdJepaDataset
+        config, model_class=config.model_class, dataset_class=config.dataset_class
     )
     trainer.train()
 
