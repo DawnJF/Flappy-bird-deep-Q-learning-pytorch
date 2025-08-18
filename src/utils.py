@@ -9,6 +9,11 @@ import torch.nn as nn
 from PIL import Image
 
 
+sys.path.append(os.getcwd())
+from src.net.thinking import Thinking
+from src.net.jepa_thinking import JepaThinking
+
+
 def setup_logging(out_dir):
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
@@ -112,3 +117,9 @@ def load_model(class_name, model_path):
     model = class_name(config_dict)
     model.load_state_dict(sd)
     return model
+
+
+if __name__ == "__main__":
+    load_model(
+        JepaThinking, "outputs/compare/train_2025_0815_165647/final_model_4000.pth"
+    )

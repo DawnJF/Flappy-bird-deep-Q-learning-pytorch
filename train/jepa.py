@@ -44,16 +44,22 @@ class JepaThinkModelV1(BaseModel):
 
     def compute_loss(self, outputs, batch):
         feal_loss = -self.feal_criterion(outputs[1], outputs[2]).mean()
-        mask = batch[1]
 
-        outputs_masked = outputs[0][mask]  # [N_mask, C]
-        labels_masked = batch[-1][mask]  # [N_mask]
-        action_mask_loss = self.criterion(outputs_masked, labels_masked)
+        label = batch[-1]
+        output = outputs[0]
+        if self.model.training:
+            mask = batch[1]
+            output = output[mask]  # [N_mask, C]
+            label = label[mask]  # [N_mask]
+        # else:
+        #     logging.warning("模型未在训练模式下，使用全量数据计算loss")
+
+        action_loss = self.criterion(output, label)
 
         result = {
-            "loss": feal_loss + action_mask_loss,
+            "loss": feal_loss + action_loss,
             "feal_loss": feal_loss,
-            "action_mask_loss": action_mask_loss,
+            "action_loss": action_loss,
         }
         return result
 
@@ -102,16 +108,22 @@ class JepaThinkModelV2(BaseModel):
 
     def compute_loss(self, outputs, batch):
         feal_loss = -self.feal_criterion(outputs[1], outputs[2]).mean()
-        mask = batch[1]
 
-        outputs_masked = outputs[0][mask]  # [N_mask, C]
-        labels_masked = batch[-1][mask]  # [N_mask]
-        action_mask_loss = self.criterion(outputs_masked, labels_masked)
+        label = batch[-1]
+        output = outputs[0]
+        if self.model.training:
+            mask = batch[1]
+            output = output[mask]  # [N_mask, C]
+            label = label[mask]  # [N_mask]
+        else:
+            logging.warning("模型未在训练模式下，使用全量数据计算loss")
+
+        action_loss = self.criterion(output, label)
 
         result = {
-            "loss": feal_loss + action_mask_loss,
+            "loss": feal_loss + action_loss,
             "feal_loss": feal_loss,
-            "action_mask_loss": action_mask_loss,
+            "action_loss": action_loss,
         }
         return result
 
@@ -143,7 +155,12 @@ class FlappyBirdJepaDataset(Dataset):
 
         keep_actions = np.zeros(length, dtype=bool)
         # 随机选择 num_true 个索引置为 True
-        true_indices = np.random.choice(length, size=length // 10, replace=False)
+        # true_indices = np.random.choice(length, size=length // 10, replace=False)
+
+        """ 跟监督学习实验保持一致, 带有action的数据相同"""
+        true_indices = [False] * length
+        true_indices[:4000] = [True] * 4000
+
         keep_actions[true_indices] = True
 
         logging.info(f"保留的动作 size: {keep_actions.sum()}")
@@ -175,9 +192,10 @@ class Config(supervised.Config):
     model_class = JepaThinkModelV2
     dataset_class = FlappyBirdJepaDataset
 
-    output_dir: str = "outputs/jepa_v1"
+    name: str = "jepa_v1"
 
-    num_step: int = 4000
+    data_size: int = 30000
+    action_data_size: int = 3000
 
 
 def train(config: Config):

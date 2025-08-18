@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from multiprocessing import Pool
 
 from src.net.jepa_thinking import JepaThinking
 from src.net.deep_q_network import DeepQNetwork
@@ -152,42 +153,48 @@ class TestRunner:
         }
 
 
-def evaluate_models(model_info_list, num_episodes=10, max_steps=None, verbose=False):
+def _evaluate_single_model(args_tuple):
     """
-    Evaluate a list of models, each for num_episodes, and return average steps for each.
-
-    Args:
-        model_info_list: List of tuples (model_name, model_path)
-        num_episodes: Number of episodes per model
-        max_steps: Max steps per episode
-        verbose: Print progress
-
-    Returns:
-        List of dicts: [{'model_name': ..., 'model_path': ..., 'avg_steps': ...}, ...]
+    Worker function for evaluating a single model.
     """
+    model_name, model_path, num_episodes, max_steps = args_tuple
+    args = Args()
+    args.model_name = model_name
+    args.model_path = model_path
+    args.save_data = False
+    tester = TestRunner(args)
+    steps_list = []
+    for _ in range(num_episodes):
+        res = tester.run_test(max_steps=max_steps, verbose=False)
+        steps_list.append(res["steps"])
+    avg_steps = np.mean(steps_list)
+    return {
+        "model_name": str(model_name),
+        "model_path": str(model_path),
+        "avg_steps": float(avg_steps),
+    }
+
+
+def evaluate_models(
+    model_info_list, num_episodes=10, max_steps=None, verbose=False, num_workers=6
+):
+    """
+    Evaluate a list of models in parallel, each for num_episodes, and return average steps for each.
+    """
+    args_list = [
+        (model_name, model_path, num_episodes, max_steps)
+        for model_name, model_path in model_info_list
+    ]
     results = []
-    for model_name, model_path in tqdm(model_info_list):
-        args = Args()
-        args.model_name = model_name
-        args.model_path = model_path
-        args.save_data = False  # 不保存数据
-        tester = TestRunner(args)
-        steps_list = []
-        for i in range(num_episodes):
+    with Pool(processes=num_workers) as pool:
+        for res in tqdm(
+            pool.imap_unordered(_evaluate_single_model, args_list), total=len(args_list)
+        ):
+            results.append(res)
             if verbose:
-                print(f"Model: {model_name}, Episode: {i+1}/{num_episodes}")
-            res = tester.run_test(max_steps=max_steps, verbose=False)
-            steps_list.append(res["steps"])
-        avg_steps = np.mean(steps_list)
-        results.append(
-            {
-                "model_name": str(model_name),
-                "model_path": str(model_path),
-                "avg_steps": float(avg_steps),
-            }
-        )
-        if verbose:
-            print(f"Model: {model_name}/{model_path}, Avg Steps: {avg_steps}")
+                print(
+                    f"Model: {res['model_name']}/{res['model_path']}, Avg Steps: {res['avg_steps']}"
+                )
     return results
 
 
@@ -204,15 +211,42 @@ def main():
 
 def test_models():
     model_info_list = [
-        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_1000.pth"),
-        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_2000.pth"),
-        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_3000.pth"),
-        (JepaThinking, "outputs/compare/train_2025_0815_165647/checkpoint_4000.pth"),
-        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_1000.pth"),
-        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_2000.pth"),
-        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_3000.pth"),
-        (Thinking, "outputs/compare/train_2025_0815_170228/checkpoint_4000.pth"),
-        # ("Model3", "path/to/model3"),
+        # (
+        #     JepaThinking,
+        #     "outputs/compare2/train_jepa_v1_2025_0817_115259/best_model_2000.pth",
+        # ),
+        # (
+        #     Thinking,
+        #     "outputs/supervised/train_supervised_2025_0817_125633/best_model_1332.pth",
+        # ),
+        # (
+        #     Thinking,
+        #     "outputs/supervised/train_supervised_2025_0817_125912/best_model_4000.pth",
+        # ),
+        # (
+        #     Thinking,
+        #     "outputs/supervised/train_supervised_2025_0817_130520/best_model_1332.pth",
+        # ),
+        (
+            Thinking,
+            "outputs/supervised/train_supervised_2025_0817_131436/checkpoint_5000.pth",
+        ),
+        (
+            Thinking,
+            "outputs/supervised/train_supervised_2025_0817_131436/checkpoint_2000.pth",
+        ),
+        (
+            Thinking,
+            "outputs/supervised/train_supervised_2025_0817_131436/checkpoint_3000.pth",
+        ),
+        (
+            Thinking,
+            "outputs/supervised/train_supervised_2025_0817_131436/checkpoint_4000.pth",
+        ),
+        # (
+        #     Thinking,
+        #     "outputs/supervised/train_supervised_2025_0817_130648/checkpoint_3996.pth",
+        # ),
     ]
 
     result = evaluate_models(model_info_list)

@@ -25,7 +25,7 @@ class Thinking(nn.Module):
 
         self.fc1 = nn.Sequential(nn.Linear(7 * 7 * 64, 512), nn.ReLU(inplace=True))
         self.fc2 = nn.Linear(512, output_dim)
-        self._create_weights()
+        # self._create_weights()
 
     def _create_weights(self):
         for m in self.modules():

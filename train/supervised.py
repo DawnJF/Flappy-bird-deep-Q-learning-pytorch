@@ -31,20 +31,21 @@ class Config:
     eval_data_path: str = (
         "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
     )
-    data_size: int = 2000
+    data_size: int = 30000
 
     # 训练参数
-    batch_size: int = 64
+    batch_size: int = 128
     learning_rate: float = 1e-4
-    num_step: int = 4000
-    save_freq: int = num_step // 4
+    num_step: int = 4500
+    save_freq: int = 400
     logging_freq: int = 200
 
     # 模型参数
     output_dim: int = 2
     channel_dim: int = 1
 
-    output_dir: str = "outputs/supervised"
+    name: str = "supervised"
+    output_dir: str = "outputs/8-17"
 
 
 device = get_device()
@@ -53,58 +54,84 @@ device = get_device()
 class TrainingState:
     """训练状态封装类"""
 
-    def __init__(self):
-        # 训练累积统计
-        self.train_loss_acc = 0.0
-        self.train_correct_acc = 0
-        self.train_total_acc = 0
-        self.epoch_step_count = 0
+    def __init__(self, config: Config):
+        self.config = config
+
+        self.steps_per_epoch = 0
+
+    def start(self):
+        self.writer = SummaryWriter(self.config.output_dir)
+        logging.info(f"TensorBoard日志保存在: {self.config.output_dir}")
 
         # 训练进度
         self.current_step = 0
         self.current_epoch = 0
 
         # 最佳模型记录
-        self.best_val_acc = 0.0
-        self.best_val_loss = float("inf")
+        self.best_eval_acc = 0.0
+        self.best_eval_loss = float("inf")
 
-    def reset_epoch_stats(self):
-        """重置epoch级别的累积统计"""
-        self.train_loss_acc = 0.0
-        self.train_correct_acc = 0
-        self.train_total_acc = 0
-        self.epoch_step_count = 0
+        """记录训练配置信息"""
+        logging.info("=" * 60)
+        logging.info(f"FlappyBird : {self.config.name}")
+        logging.info("=" * 60)
+        logging.info(f"配置:")
+        for key, value in asdict(self.config).items():
+            logging.info(f"  {key}: {value}")
+        logging.info("=" * 60)
 
-    def update_train_stats(self, loss, correct, total):
-        """更新训练统计信息"""
-        self.train_loss_acc += loss
-        self.train_correct_acc += correct
-        self.train_total_acc += total
-        self.epoch_step_count += 1
+    def log_step(self, step, loss_dict, acc):
+        """更新训练状态"""
+        self.current_step = step
+        self.current_epoch = (step - 1) // self.steps_per_epoch + 1
 
-    def get_avg_train_loss(self):
-        """获取平均训练损失"""
-        return (
-            self.train_loss_acc / self.epoch_step_count
-            if self.epoch_step_count > 0
-            else 0.0
-        )
+        self.writer.add_scalar("Train/Train_Accuracy", 100.0 * acc, step)
+        self.writer.add_scalar("Train/Epoch", self.current_epoch, step)
 
-    def get_train_accuracy(self):
-        """获取训练准确率"""
-        return (
-            100.0 * self.train_correct_acc / self.train_total_acc
-            if self.train_total_acc > 0
-            else 0.0
-        )
+        loss_log = ""
+        for k, v in loss_dict.items():
+            self.writer.add_scalar(f"Train/Train_{k}", v.item(), step)
+            loss_log += f"{k}: {v.item():.4f}, "
+
+        # 打印训练进度
+        if step % self.config.logging_freq == 0:
+            logging.info(
+                f"Step [{step}/{self.config.num_step}] (Epoch {self.current_epoch}), "
+                f"Acc: {100.0 * acc:.2f}%, "
+                f"{loss_log}"
+            )
 
     def update_best_model(self, val_acc, val_loss):
         """更新最佳模型记录"""
-        if val_acc > self.best_val_acc:
-            self.best_val_acc = val_acc
-            self.best_val_loss = val_loss
+        if val_acc > self.best_eval_acc:
+            self.best_eval_acc = val_acc
+            self.best_eval_loss = val_loss
             return True
         return False
+
+    def log_evaluation(self, loss_logs, acc):
+        """记录评估指标到TensorBoard"""
+        step = self.current_step
+        logging.info(f"Evaluation: [{step}] Acc: {acc * 100:.4f}%")
+
+        self.writer.add_scalar("Train/Eval_Accuracy", acc, step)
+
+        loss_log = ""
+        for k, v in loss_logs.items():
+            self.writer.add_scalar(f"Train/Eval_{k}", v, step)
+            loss_log += f"{k}: {v:.4f}, "
+
+        logging.info(f"Evaluation: [{step}]" f"Acc: {acc * 100:.4f}%, " f"{loss_log}")
+
+    def finish(self):
+
+        self.writer.close()
+        logging.info("=" * 60)
+        logging.info(f"---- 训练完成！ ----")
+        logging.info(f"最佳验证准确率: {self.best_eval_acc * 100:.4f}%")
+        logging.info(f"TensorBoard日志: {self.config.output_dir}")
+        logging.info("运行以下命令查看训练过程:")
+        logging.info(f"tensorboard --logdir {self.config.output_dir}")
 
 
 class FlappyBirdDataset(Dataset):
@@ -207,23 +234,25 @@ class SupervisedTrainer:
     def __init__(self, config: Config, model_class=None, dataset_class=None):
         self.config = config
         self.device = get_device()
-        self.training_state = TrainingState()
         self.model_class = model_class or ThinkingModel
         self.dataset_class = dataset_class or FlappyBirdDataset
 
         # 设置输出目录
         timestamp = datetime.now().strftime("%Y_%m%d_%H%M%S")
-        self.config.output_dir = os.path.join(config.output_dir, f"train_{timestamp}")
+        self.config.output_dir = os.path.join(
+            config.output_dir, self.config.name, f"train_{self.config.name}_{timestamp}"
+        )
         os.makedirs(self.config.output_dir, exist_ok=True)
 
         # 设置日志
         setup_logging(self.config.output_dir)
 
+        self.training_state = TrainingState(self.config)
+
         # 初始化组件
         self.model = None
         self.optimizer = None
         self.criterion = None
-        self.writer = None
         self.train_loader = None
         self.val_loader = None
 
@@ -231,18 +260,14 @@ class SupervisedTrainer:
         """保存模型检查点的辅助函数"""
         step = self.training_state.current_step
         epoch = self.training_state.current_epoch
-        val_acc = self.training_state.best_val_acc
-        val_loss = self.training_state.best_val_loss
+        eval_acc = self.training_state.best_eval_acc
+        eval_loss = self.training_state.best_eval_loss
 
         if checkpoint_type == "best":
-            logging.info(f"保存最佳模型 (Step {step})")
-            filename = f"best_model_{step}.pth"
-            # delete last best model
-            last_best_model = os.path.join(
-                self.config.output_dir, f"best_model_{step - self.config.save_freq}.pth"
+            logging.info(
+                f"保存最佳模型 Step {step}, acc: {eval_acc * 100:.4f}%, loss: {eval_loss:.4f}"
             )
-            if os.path.exists(last_best_model):
-                os.remove(last_best_model)
+            filename = f"best_model.pth"
         elif checkpoint_type == "final":
             logging.info(f"最终模型 (Step {step})")
             filename = f"final_model_{step}.pth"
@@ -255,8 +280,8 @@ class SupervisedTrainer:
         metadata = {
             "epoch": epoch,
             "step": step,
-            "val_acc": val_acc,
-            "val_loss": val_loss,
+            "eval_acc": eval_acc,
+            "eval_loss": eval_loss,
         }
 
         save_model(self.model, model_path, asdict(self.config), metadata)
@@ -312,42 +337,10 @@ class SupervisedTrainer:
                 correct += (predicted == batch[-1]).sum().item()
 
         avg_loss = total_loss / len(data_loader)
-        accuracy = 100.0 * correct / total
+        accuracy = correct / total
         # 计算所有loss的平均值
         avg_loss_logs = {k: v / len(data_loader) for k, v in loss_logs.items()}
         return avg_loss, accuracy, avg_loss_logs
-
-    def log_training_metrics(
-        self,
-        train_loss,
-        train_acc,
-        val_loss=None,
-        val_acc=None,
-        train_loss_logs=None,
-        val_loss_logs=None,
-    ):
-        """记录训练指标到TensorBoard"""
-        step = self.training_state.current_step
-        epoch = self.training_state.current_epoch
-
-        self.writer.add_scalar("Step/Train_Loss", train_loss, step)
-        self.writer.add_scalar("Step/Train_Accuracy", train_acc, step)
-        self.writer.add_scalar("Step/Epoch", epoch, step)
-
-        # 记录所有loss
-        if train_loss_logs:
-            for k, v in train_loss_logs.items():
-                self.writer.add_scalar(f"Step/Train_{k}", v, step)
-
-        if val_loss is not None and val_acc is not None:
-            self.writer.add_scalar("Epoch/Train_Loss", train_loss, epoch)
-            self.writer.add_scalar("Epoch/Train_Accuracy", train_acc, epoch)
-            self.writer.add_scalar("Epoch/Val_Loss", val_loss, epoch)
-            self.writer.add_scalar("Epoch/Val_Accuracy", val_acc, epoch)
-            # 记录所有loss
-            if val_loss_logs:
-                for k, v in val_loss_logs.items():
-                    self.writer.add_scalar(f"Epoch/Val_{k}", v, epoch)
 
     def prepare_training_loader(self):
         """加载和预处理数据集"""
@@ -356,11 +349,12 @@ class SupervisedTrainer:
         data = load_data(self.config.data_path)
         logging.info(f"data len: {len(data['observations'])}")
 
-        data_size = (
-            self.config.data_size
-            if self.config.data_size > 0
-            else len(data["observations"])
-        )
+        data_size = self.config.data_size
+
+        assert data_size <= len(
+            data["observations"]
+        ), f"数据样本数量不足: {data_size} > {len(data['observations'])}"
+
         logging.info(f"使用数据样本数量: {data_size}")
         observations = data["observations"][:data_size]
         actions = data["actions"][:data_size]
@@ -385,8 +379,8 @@ class SupervisedTrainer:
         logging.info("******** 加载和预处理: 验证数据集 ********")
         data = load_data(self.config.eval_data_path)
         logging.info(f"eval data len: {len(data['observations'])}")
-        observations = data["observations"][:10000]
-        actions = data["actions"][:10000]
+        observations = data["observations"][:30000]
+        actions = data["actions"][:30000]
 
         # 使用预处理函数
         observations = self.preprocess_observations(
@@ -400,7 +394,7 @@ class SupervisedTrainer:
         logging.info(f"验证集大小: {len(dataset)}")
 
         self.val_loader = DataLoader(
-            dataset, batch_size=self.config.batch_size, shuffle=False
+            dataset, batch_size=self.config.batch_size, shuffle=True
         )
 
     def setup_training(self):
@@ -413,66 +407,24 @@ class SupervisedTrainer:
             self.model.parameters(), lr=self.config.learning_rate
         )
 
-        # TensorBoard记录器
-        self.writer = SummaryWriter(self.config.output_dir)
-        logging.info(f"TensorBoard日志保存在: {self.config.output_dir}")
-
-    def _log_training_info(self):
-        """记录训练配置信息"""
-        logging.info("=" * 60)
-        logging.info("FlappyBird 监督学习训练")
-        logging.info("=" * 60)
-        logging.info(f"配置:")
-        for key, value in asdict(self.config).items():
-            logging.info(f"  {key}: {value}")
-        logging.info("=" * 60)
-
-    def _perform_validation_and_save(self):
-        logging.info("--- 验证和保存模型 ---")
-        """执行验证并保存模型"""
-        # 计算训练平均值
-        avg_train_loss = self.training_state.get_avg_train_loss()
-        train_acc = self.training_state.get_train_accuracy()
-        # 训练loss日志（这里只能记录主loss，详细loss需在train循环中传入）
-        train_loss_logs = None
+    def _perform_validation_and_save(self, checkpoint_type="checkpoint"):
+        logging.info("--- Evaluate ---")
 
         # 验证
-        avg_val_loss, val_acc, val_loss_logs = self.evaluate_model_accuracy()
+        avg_eval_loss, eval_acc, eval_loss_logs = self.evaluate_model_accuracy()
 
-        # 记录epoch级别的指标到TensorBoard
-        self.log_training_metrics(
-            avg_train_loss,
-            train_acc,
-            avg_val_loss,
-            val_acc,
-            train_loss_logs,
-            val_loss_logs,
-        )
-
-        step = self.training_state.current_step
-        epoch = self.training_state.current_epoch
-
-        logging.info(f"Epoch {epoch} 完成 (Step {step})")
-        logging.info(f"训练 - Loss: {avg_train_loss:.4f}, Acc: {train_acc:.2f}%")
-        logging.info(f"验证 - Loss: {avg_val_loss:.4f}, Acc: {val_acc:.2f}%")
-        # 日志记录所有loss
-        if val_loss_logs:
-            for k, v in val_loss_logs.items():
-                logging.info(f"验证 - {k}: {v:.4f}")
-        logging.info("-" * 60)
+        self.training_state.log_evaluation(eval_loss_logs, eval_acc)
 
         # 保存检查点
-        self.save_model_checkpoint(checkpoint_type="checkpoint")
+        self.save_model_checkpoint(checkpoint_type)
 
         # 保存最佳模型
-        if self.training_state.update_best_model(val_acc, avg_val_loss):
+        if self.training_state.update_best_model(eval_acc, avg_eval_loss):
             self.save_model_checkpoint(checkpoint_type="best")
-
-        return avg_val_loss, val_acc
 
     def train(self):
         """训练模型"""
-        self._log_training_info()
+        self.training_state.start()
 
         # 加载数据和设置训练
         self.prepare_training_loader()
@@ -480,16 +432,16 @@ class SupervisedTrainer:
         self.setup_training()
 
         steps_per_epoch = len(self.train_loader)
+        self.training_state.steps_per_epoch = steps_per_epoch
+        logging.info("=" * 60)
         logging.info(
-            f"******** 开始训练(总步数: {self.config.num_step}, 每轮步数: {steps_per_epoch}) ********"
+            f"---- 开始训练(总步数: {self.config.num_step}, 每轮步数: {steps_per_epoch}) ----"
         )
 
         # 创建数据加载器的无限迭代器
         train_iter = itertools.cycle(self.train_loader)
 
         for step in range(1, self.config.num_step + 1):
-            self.training_state.current_step = step
-            self.training_state.current_epoch = (step - 1) // steps_per_epoch + 1
 
             # 训练一步
             self.model.train()
@@ -510,45 +462,21 @@ class SupervisedTrainer:
             self.optimizer.step()
 
             # 更新统计信息
+            label = batch[-1]
             _, predicted = torch.max(outputs[0].data, 1)
-            correct = (predicted == batch[-1]).sum().item()
-            total = batch[-1].size(0)
-            self.training_state.update_train_stats(loss.item(), correct, total)
+            correct_num = (predicted == label).sum().item()
+            acc = correct_num / label.size(0)
 
-            # 记录到TensorBoard和日志
-            self.log_training_metrics(
-                loss.item(),
-                self.training_state.get_train_accuracy(),
-                train_loss_logs={k: v.item() for k, v in loss_dict.items()},
-            )
-
-            # 打印训练进度
-            if step % self.config.logging_freq == 0:
-                logging.info(
-                    f"Step [{step}/{self.config.num_step}] (Epoch {self.training_state.current_epoch}), "
-                    f"Loss: {loss.item():.4f}, "
-                    f"Acc: {self.training_state.get_train_accuracy():.2f}%"
-                )
-                for k, v in loss_dict.items():
-                    logging.info(f"训练 - {k}: {v.item():.4f}")
+            self.training_state.log_step(step, loss_dict, acc)
 
             # 验证和保存
             if step % self.config.save_freq == 0:
-                avg_val_loss, val_acc = self._perform_validation_and_save()
-                # 重置累积统计
-                self.training_state.reset_epoch_stats()
+                self._perform_validation_and_save()
 
         # 保存最终模型
-        avg_val_loss, val_acc, val_loss_logs = self.evaluate_model_accuracy()
-        self.save_model_checkpoint(checkpoint_type="final")
+        self._perform_validation_and_save("final")
 
-        self.writer.close()
-
-        logging.info(f"\n训练完成！")
-        logging.info(f"最佳验证准确率: {self.training_state.best_val_acc:.2f}%")
-        logging.info(f"TensorBoard日志: {self.config.output_dir}")
-        logging.info("运行以下命令查看训练过程:")
-        logging.info(f"tensorboard --logdir {self.config.output_dir}")
+        self.training_state.finish()
 
     def evaluate_model(self, model_path: str):
         """评估保存的模型"""
@@ -567,7 +495,7 @@ class SupervisedTrainer:
         # 创建测试数据集
         dataset = FlappyBirdDataset(observations, actions)
         test_loader = DataLoader(
-            dataset, batch_size=self.config.batch_size, shuffle=False
+            dataset, batch_size=self.config.batch_size, shuffle=True
         )
 
         # 加载模型
