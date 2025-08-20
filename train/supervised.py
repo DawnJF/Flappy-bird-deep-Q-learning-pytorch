@@ -31,12 +31,12 @@ class Config:
     eval_data_path: str = (
         "outputs/dataset_s4/observations_actions_flappy_bird_800000_20250806_003553.h5"
     )
-    data_size: int = 3000
+    data_size: int = 30000
 
     # 训练参数
     batch_size: int = 128
     learning_rate: float = 1e-4
-    num_step: int = 7000
+    num_step: int = 8000
     save_freq: int = 400
     logging_freq: int = 200
 
@@ -45,7 +45,7 @@ class Config:
     channel_dim: int = 4
 
     name: str = "supervised"
-    output_dir: str = "outputs/8-18"
+    output_dir: str = "outputs/8-19/data_size_30000"
 
 
 device = get_device()

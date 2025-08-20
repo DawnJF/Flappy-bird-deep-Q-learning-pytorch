@@ -28,15 +28,15 @@ loss直接 -1
 """
 
 
+
 """
-JepaThinkModelV2
-Evaluation Results:
-Model: <class 'src.net.jepa_thinking.JepaThinking'>/outputs/compare/train_2025_0815_165647/checkpoint_1000.pth, Avg Steps: 18.0
-Model: <class 'src.net.jepa_thinking.JepaThinking'>/outputs/compare/train_2025_0815_165647/checkpoint_2000.pth, Avg Steps: 264.4
-Model: <class 'src.net.jepa_thinking.JepaThinking'>/outputs/compare/train_2025_0815_165647/checkpoint_3000.pth, Avg Steps: 626.3
-Model: <class 'src.net.jepa_thinking.JepaThinking'>/outputs/compare/train_2025_0815_165647/checkpoint_4000.pth, Avg Steps: 825.2
-Model: <class 'src.net.thinking.Thinking'>/outputs/compare/train_2025_0815_170228/checkpoint_1000.pth, Avg Steps: 18.0
-Model: <class 'src.net.thinking.Thinking'>/outputs/compare/train_2025_0815_170228/checkpoint_2000.pth, Avg Steps: 309.8
-Model: <class 'src.net.thinking.Thinking'>/outputs/compare/train_2025_0815_170228/checkpoint_3000.pth, Avg Steps: 345.2
-Model: <class 'src.net.thinking.Thinking'>/outputs/compare/train_2025_0815_170228/checkpoint_4000.pth, Avg Steps: 230.9
+8-18
+少数据量+无action 有效
+
+8-19
+不用action的loss，loss很快降到-1，可能是数据太少了（任务太单一了）
+
+8-20
+数据量非常大的时候，两种方法没区别
+
 """
