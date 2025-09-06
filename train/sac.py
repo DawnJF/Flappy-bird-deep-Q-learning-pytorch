@@ -1,9 +1,8 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
 import os
+import sys
 import random
 import time
 from dataclasses import dataclass
-
 import gymnasium as gym
 import numpy as np
 import torch
@@ -11,35 +10,40 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import tyro
+import logging
 from torch.utils.tensorboard import SummaryWriter
 
-from buffers import ReplayBuffer
+sys.path.append(os.getcwd())
+from src.buffers import ReplayBuffer
+from src.utils import get_device, setup_logging
+
+# from src.flappy_bird_env import FlappyBirdEnv
 
 
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
+    output_dir: str = "outputs/sac"
     seed: int = 1
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
+
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
-    """the wandb's project name"""
-    wandb_entity: str = None
-    """the entity (team) of wandb's project"""
+
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
     env_id: str = "Hopper-v4"
     """the environment id of the task"""
+    learning_starts: int = 5000
+    """timestep to start learning"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
+
     num_envs: int = 1
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
@@ -50,8 +54,6 @@ class Args:
     """target smoothing coefficient (default: 0.005)"""
     batch_size: int = 256
     """the batch size of sample from the reply memory"""
-    learning_starts: int = 5e3
-    """timestep to start learning"""
     policy_lr: float = 3e-4
     """the learning rate of the policy network optimizer"""
     q_lr: float = 1e-3
@@ -65,14 +67,24 @@ class Args:
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
 
+    # Checkpoint arguments
+    save_freq: int = 200000
+    """frequency to save checkpoints"""
+    load_checkpoint: str = None
+    """path to load checkpoint from"""
+    render: bool = True
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+
+device = get_device()
+
+
+def make_env(env_id, seed, idx, capture_video, run_name="debug", render=False):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, render_mode="human" if render else None)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -154,23 +166,102 @@ class Actor(nn.Module):
         return action, log_prob, mean
 
 
-if __name__ == "__main__":
+def save_checkpoint(actor, qf1, qf2, actor_optimizer, q_optimizer, global_step, args):
+    """Save model checkpoint"""
+    checkpoint_path = args.output_dir
+
+    checkpoint = {
+        "global_step": global_step,
+        "actor_state_dict": actor.state_dict(),
+        "qf1_state_dict": qf1.state_dict(),
+        "qf2_state_dict": qf2.state_dict(),
+        "actor_optimizer_state_dict": actor_optimizer.state_dict(),
+        "q_optimizer_state_dict": q_optimizer.state_dict(),
+        "args": args,
+    }
+
+    torch.save(checkpoint, f"{checkpoint_path}/checkpoint_{global_step}.pt")
+    print(f"Checkpoint saved at step {global_step}")
+
+
+def load_checkpoint(checkpoint_path, actor, device):
+    """Load model checkpoint"""
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+    actor.load_state_dict(checkpoint["actor_state_dict"])
+    # qf1.load_state_dict(checkpoint["qf1_state_dict"])
+    # qf2.load_state_dict(checkpoint["qf2_state_dict"])
+    # actor_optimizer.load_state_dict(checkpoint["actor_optimizer_state_dict"])
+    # q_optimizer.load_state_dict(checkpoint["q_optimizer_state_dict"])
+
+    return checkpoint["global_step"], checkpoint["args"]
+
+
+def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
+    """Evaluate the agent and optionally render the environment"""
+
+    env = gym.vector.SyncVectorEnv([make_env("Hopper-v4", 42, 0, False, render=True)])
+
+    actor = Actor(env)
+
+    load_checkpoint(load_checkpoint_path, actor, device="cpu")
+
+    episode_returns = []
+    episode_lengths = []
+
+    for episode in range(num_episodes):
+        obs, _ = env.reset()
+        episode_return = 0
+        episode_length = 0
+        done = False
+
+        while not done and episode_length < max_steps:
+            with torch.no_grad():
+                obs_tensor = torch.FloatTensor(obs).unsqueeze(0)
+                action, _, _ = actor.get_action(obs_tensor)
+                action = action.cpu().numpy()[0]
+
+            obs, reward, terminated, truncated, _ = env.step(action)
+
+            reward_scalar = np.asarray(reward).item()
+            episode_return += reward_scalar
+            episode_length += 1
+            done = terminated or truncated
+
+            if done:
+                print("Episode finished after {} timesteps".format(episode_length))
+
+            # if render:
+            # eval_env.render()
+            # time.sleep(0.01)  # Small delay for better visualization
+
+        episode_returns.append(episode_return)
+        episode_lengths.append(episode_length)
+        print(
+            f"Eval Episode {episode + 1}: Return = {float(episode_return):.2f}, Length = {episode_length}"
+        )
+
+    env.close()
+
+    avg_return = np.mean(episode_returns)
+    avg_length = np.mean(episode_lengths)
+
+    print(
+        f"Evaluation Results: Avg Return = {float(avg_return):.2f}, Avg Length = {float(avg_length):.2f}"
+    )
+    return avg_return, avg_length
+
+
+def train():
 
     args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
+    args.output_dir = os.path.join(args.output_dir, run_name)
+    os.makedirs(args.output_dir, exist_ok=True)
 
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
-    writer = SummaryWriter(f"runs/{run_name}")
+    setup_logging(args.output_dir)
+
+    writer = SummaryWriter(args.output_dir)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -183,18 +274,25 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-
     # env setup
     envs = gym.vector.SyncVectorEnv(
         [
-            make_env(args.env_id, args.seed + i, i, args.capture_video, run_name)
+            make_env(
+                args.env_id,
+                args.seed + i,
+                i,
+                args.capture_video,
+                run_name,
+                render=args.render,
+            )
             for i in range(args.num_envs)
         ]
     )
     assert isinstance(
         envs.single_action_space, gym.spaces.Box
     ), "only continuous action space is supported"
+
+    logging.info(f"observation_space: {envs.single_observation_space}")
 
     max_action = float(envs.single_action_space.high[0])
 
@@ -235,6 +333,10 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
+
+        if global_step == args.learning_starts:
+            logging.info("Learning starts now!")
+
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array(
@@ -251,9 +353,9 @@ if __name__ == "__main__":
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info is not None:
-                    print(
-                        f"global_step={global_step}, episodic_return={info['episode']['r']}"
-                    )
+                    # logging.info(
+                    #     f"global_step={global_step}, episodic_return={info['episode']['r']}"
+                    # )
                     writer.add_scalar(
                         "charts/episodic_return", info["episode"]["r"], global_step
                     )
@@ -268,6 +370,9 @@ if __name__ == "__main__":
             if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+        if rb.size == args.buffer_size - 1:
+            logging.info("Replay buffer is full!")
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -328,6 +433,7 @@ if __name__ == "__main__":
 
             # update the target networks
             if global_step % args.target_network_frequency == 0:
+
                 for param, target_param in zip(
                     qf1.parameters(), qf1_target.parameters()
                 ):
@@ -353,16 +459,48 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
+                writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
+                writer.add_scalar("losses/entropy", -log_pi.mean().item(), global_step)
+
                 writer.add_scalar(
                     "charts/SPS",
                     int(global_step / (time.time() - start_time)),
                     global_step,
                 )
-                if args.autotune:
-                    writer.add_scalar(
-                        "losses/alpha_loss", alpha_loss.item(), global_step
-                    )
+
+                logging.info(
+                    f"global_step={global_step}, actor_loss={actor_loss.item():.3f}, qf1_loss={qf1_loss.item():.3f}, qf2_loss={qf2_loss.item():.3f}, alpha={alpha:.3f}"
+                )
+                logging.info(f"SPS: {int(global_step / (time.time() - start_time))}")
+
+        # Save checkpoint
+        if global_step > 0 and global_step % args.save_freq == 0:
+            save_checkpoint(
+                actor,
+                qf1,
+                qf2,
+                actor_optimizer,
+                q_optimizer,
+                global_step,
+                args,
+            )
+
+    # Final checkpoint save
+    save_checkpoint(actor, qf1, qf2, actor_optimizer, q_optimizer, global_step, args)
 
     envs.close()
     writer.close()
+
+
+def test():
+
+    load_checkpoint_path = (
+        "outputs/sac/Hopper-v4__sac__1__1757090562/checkpoint_700000.pt"
+    )
+
+    evaluate_agent(load_checkpoint_path, 1)
+
+
+if __name__ == "__main__":
+    # test()
+    train()
