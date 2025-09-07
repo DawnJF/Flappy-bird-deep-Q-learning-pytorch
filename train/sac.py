@@ -27,8 +27,6 @@ class Args:
     output_dir: str = "outputs/sac"
     seed: int = 1
     """seed of the experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
 
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
@@ -72,10 +70,31 @@ class Args:
     """frequency to save checkpoints"""
     load_checkpoint: str = None
     """path to load checkpoint from"""
-    render: bool = True
+    render: bool = False
 
 
 device = get_device()
+
+
+class SparseHopper(gym.Wrapper):
+    def __init__(self, env, goal_distance=1.0):
+        super().__init__(env)
+        self.goal_distance = goal_distance
+
+    def step(self, action):
+        observation, reward, terminated, truncated, info = self.env.step(action)
+
+        distance = info["x_position"]
+
+        # 定义稀疏奖励
+        sparse_reward = 0.0
+        # 如果成功到达目标距离
+        if distance >= self.goal_distance:
+            sparse_reward = 1.0
+            terminated = True  # 成功也终止回合
+
+        # 完全忽略原本的密集奖励
+        return observation, sparse_reward, terminated, truncated, info
 
 
 def make_env(env_id, seed, idx, capture_video, run_name="debug", render=False):
@@ -85,6 +104,7 @@ def make_env(env_id, seed, idx, capture_video, run_name="debug", render=False):
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
             env = gym.make(env_id, render_mode="human" if render else None)
+        env = SparseHopper(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -221,7 +241,10 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
                 action, _, _ = actor.get_action(obs_tensor)
                 action = action.cpu().numpy()[0]
 
-            obs, reward, terminated, truncated, _ = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
+
+            distance = info["x_position"]
+            print(f"Step: {episode_length}, Reward: {reward}, distance: {distance}")
 
             reward_scalar = np.asarray(reward).item()
             episode_return += reward_scalar
@@ -255,7 +278,8 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
 def train():
 
     args = tyro.cli(Args)
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    time_str = time.strftime("%Y-%m-%d-%H-%M-%S")
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{time_str}"
     args.output_dir = os.path.join(args.output_dir, run_name)
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -272,7 +296,6 @@ def train():
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
@@ -293,6 +316,11 @@ def train():
     ), "only continuous action space is supported"
 
     logging.info(f"observation_space: {envs.single_observation_space}")
+    logging.info(f"action_space: {envs.single_action_space}")
+    logging.info(f"=" * 50)
+
+    # if type(envs.single_observation_space) == gym.spaces.Dict:
+    #     observation = envs.single_observation_space["observation"]
 
     max_action = float(envs.single_action_space.high[0])
 
@@ -316,6 +344,7 @@ def train():
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
         a_optimizer = optim.Adam([log_alpha], lr=args.q_lr)
+        logging.info(f"Target entropy set to {target_entropy:.2f}")
     else:
         alpha = args.alpha
 
@@ -329,6 +358,7 @@ def train():
         handle_timeout_termination=False,
     )
     start_time = time.time()
+    log_buffer_full = False
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -367,12 +397,13 @@ def train():
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
-            if trunc:
+            if trunc and "final_observation" in infos:  # Note
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
-        if rb.size == args.buffer_size - 1:
+        if rb.size == args.buffer_size and not log_buffer_full:
             logging.info("Replay buffer is full!")
+            log_buffer_full = True
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -495,7 +526,7 @@ def train():
 def test():
 
     load_checkpoint_path = (
-        "outputs/sac/Hopper-v4__sac__1__1757090562/checkpoint_700000.pt"
+        "outputs/sac/Hopper-v4__sac__1__1757170278/checkpoint_200000.pt"
     )
 
     evaluate_agent(load_checkpoint_path, 1)
