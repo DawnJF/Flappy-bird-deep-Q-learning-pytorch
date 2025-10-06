@@ -1,6 +1,7 @@
 """
 @author: Viet Nguyen <nhviet1009@gmail.com>
 """
+
 from itertools import cycle
 from numpy.random import randint
 from pygame import Rect, init, time, display
@@ -17,15 +18,19 @@ class FlappyBird(object):
     screen_width = 288
     screen_height = 512
     screen = display.set_mode((screen_width, screen_height))
-    display.set_caption('Deep Q-Network Flappy Bird')
-    base_image = load('assets/sprites/base.png').convert_alpha()
-    background_image = load('assets/sprites/background-black.png').convert()
+    display.set_caption("Deep Q-Network Flappy Bird")
+    base_image = load("assets/sprites/base.png").convert_alpha()
+    background_image = load("assets/sprites/background-black.png").convert()
 
-    pipe_images = [rotate(load('assets/sprites/pipe-green.png').convert_alpha(), 180),
-                   load('assets/sprites/pipe-green.png').convert_alpha()]
-    bird_images = [load('assets/sprites/redbird-upflap.png').convert_alpha(),
-                   load('assets/sprites/redbird-midflap.png').convert_alpha(),
-                   load('assets/sprites/redbird-downflap.png').convert_alpha()]
+    pipe_images = [
+        rotate(load("assets/sprites/pipe-green.png").convert_alpha(), 180),
+        load("assets/sprites/pipe-green.png").convert_alpha(),
+    ]
+    bird_images = [
+        load("assets/sprites/redbird-upflap.png").convert_alpha(),
+        load("assets/sprites/redbird-midflap.png").convert_alpha(),
+        load("assets/sprites/redbird-downflap.png").convert_alpha(),
+    ]
     # number_images = [load('assets/sprites/{}.png'.format(i)).convert_alpha() for i in range(10)]
 
     bird_hitmask = [pixels_alpha(image).astype(bool) for image in bird_images]
@@ -57,7 +62,9 @@ class FlappyBird(object):
 
         self.base_x = 0
         self.base_y = self.screen_height * 0.79
-        self.base_shift = self.base_image.get_width() - self.background_image.get_width()
+        self.base_shift = (
+            self.base_image.get_width() - self.background_image.get_width()
+        )
 
         pipes = [self.generate_pipe(), self.generate_pipe()]
         pipes[0]["x_upper"] = pipes[0]["x_lower"] = self.screen_width
@@ -70,7 +77,12 @@ class FlappyBird(object):
     def generate_pipe(self):
         x = self.screen_width + 10
         gap_y = randint(2, 10) * 10 + int(self.base_y / 5)
-        return {"x_upper": x, "y_upper": gap_y - self.pipe_height, "x_lower": x, "y_lower": gap_y + self.pipe_gap_size}
+        return {
+            "x_upper": x,
+            "y_upper": gap_y - self.pipe_height,
+            "x_lower": x,
+            "y_lower": gap_y + self.pipe_gap_size,
+        }
 
     def is_collided(self):
         # Check if the bird touch ground
@@ -79,8 +91,16 @@ class FlappyBird(object):
         bird_bbox = Rect(self.bird_x, self.bird_y, self.bird_width, self.bird_height)
         pipe_boxes = []
         for pipe in self.pipes:
-            pipe_boxes.append(Rect(pipe["x_upper"], pipe["y_upper"], self.pipe_width, self.pipe_height))
-            pipe_boxes.append(Rect(pipe["x_lower"], pipe["y_lower"], self.pipe_width, self.pipe_height))
+            pipe_boxes.append(
+                Rect(
+                    pipe["x_upper"], pipe["y_upper"], self.pipe_width, self.pipe_height
+                )
+            )
+            pipe_boxes.append(
+                Rect(
+                    pipe["x_lower"], pipe["y_lower"], self.pipe_width, self.pipe_height
+                )
+            )
             # Check if the bird's bounding box overlaps to the bounding box of any pipe
             if bird_bbox.collidelist(pipe_boxes) == -1:
                 return False
@@ -90,9 +110,16 @@ class FlappyBird(object):
                 min_y1 = cropped_bbox.y - bird_bbox.y
                 min_x2 = cropped_bbox.x - pipe_boxes[i].x
                 min_y2 = cropped_bbox.y - pipe_boxes[i].y
-                if np.any(self.bird_hitmask[self.bird_index][min_x1:min_x1 + cropped_bbox.width,
-                       min_y1:min_y1 + cropped_bbox.height] * self.pipe_hitmask[i][min_x2:min_x2 + cropped_bbox.width,
-                                                              min_y2:min_y2 + cropped_bbox.height]):
+                if np.any(
+                    self.bird_hitmask[self.bird_index][
+                        min_x1 : min_x1 + cropped_bbox.width,
+                        min_y1 : min_y1 + cropped_bbox.height,
+                    ]
+                    * self.pipe_hitmask[i][
+                        min_x2 : min_x2 + cropped_bbox.width,
+                        min_y2 : min_y2 + cropped_bbox.height,
+                    ]
+                ):
                     return True
         return False
 
@@ -125,7 +152,10 @@ class FlappyBird(object):
             self.current_velocity_y += self.downward_speed
         if self.is_flapped:
             self.is_flapped = False
-        self.bird_y += min(self.current_velocity_y, self.bird_y - self.current_velocity_y - self.bird_height)
+        self.bird_y += min(
+            self.current_velocity_y,
+            self.bird_y - self.current_velocity_y - self.bird_height,
+        )
         if self.bird_y < 0:
             self.bird_y = 0
 

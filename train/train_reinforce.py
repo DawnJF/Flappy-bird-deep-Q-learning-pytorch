@@ -10,7 +10,7 @@ import tyro
 
 sys.path.append(os.getcwd())
 from src.obs_processor import ObsProcessor
-from src.flappy_bird_env import FlappyBirdEnv
+from envs.flappy_bird_env import FlappyBirdEnv
 from src.net.thinking import Thinking
 from src.utils import get_device
 

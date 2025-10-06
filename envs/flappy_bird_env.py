@@ -1,7 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from src.flappy_bird import FlappyBird
+from envs.flappy_bird import FlappyBird
 
 
 class FlappyBirdEnv(gym.Env):

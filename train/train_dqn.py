@@ -11,7 +11,7 @@ import tyro
 
 sys.path.append(os.getcwd())
 from src.net.deep_q_network import DeepQNetwork
-from src.flappy_bird_env import FlappyBirdEnv
+from envs.flappy_bird_env import FlappyBirdEnv
 from src.obs_processor import ObsProcessor
 from src.utils import get_device
 
