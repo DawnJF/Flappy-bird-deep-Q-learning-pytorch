@@ -42,8 +42,6 @@ class Args:
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
 
-    num_envs: int = 1
-    """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
     gamma: float = 0.99
@@ -76,28 +74,23 @@ class Args:
 device = get_device()
 
 
-def make_env(env_id, seed, idx, capture_video, run_name="debug", render=False):
-    def thunk():
-        if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        else:
-            env = gym.make(env_id, render_mode="human" if render else None)
-        # env = SparseHopper(env)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.action_space.seed(seed)
-        return env
-
-    return thunk
+def make_env(env_id, capture_video, render=False):
+    if capture_video:
+        env = gym.make(env_id, render_mode="rgb_array")
+        env = gym.wrappers.RecordVideo(env, f"videos/{env_id}")
+    else:
+        env = gym.make(env_id, render_mode="human" if render else None)
+    # env = SparseHopper(env)
+    env = gym.wrappers.RecordEpisodeStatistics(env)
+    return env
 
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, observation_space, action_space):
         super().__init__()
         self.fc1 = nn.Linear(
-            np.array(env.single_observation_space.shape).prod()
-            + np.prod(env.single_action_space.shape),
+            np.array(observation_space.shape).prod() + np.prod(action_space.shape),
             256,
         )
         self.fc2 = nn.Linear(256, 256)
@@ -116,25 +109,23 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env):
+    def __init__(self, observation_space, action_space):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
+        self.fc1 = nn.Linear(np.array(observation_space.shape).prod(), 256)
         self.fc2 = nn.Linear(256, 256)
-        self.fc_mean = nn.Linear(256, np.prod(env.single_action_space.shape))
-        self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
+        self.fc_mean = nn.Linear(256, np.prod(action_space.shape))
+        self.fc_logstd = nn.Linear(256, np.prod(action_space.shape))
         # action rescaling
         self.register_buffer(
             "action_scale",
             torch.tensor(
-                (env.single_action_space.high - env.single_action_space.low) / 2.0,
-                dtype=torch.float32,
+                (action_space.high - action_space.low) / 2.0, dtype=torch.float32
             ),
         )
         self.register_buffer(
             "action_bias",
             torch.tensor(
-                (env.single_action_space.high + env.single_action_space.low) / 2.0,
-                dtype=torch.float32,
+                (action_space.high + action_space.low) / 2.0, dtype=torch.float32
             ),
         )
 
@@ -199,9 +190,11 @@ def load_checkpoint(checkpoint_path, actor, device):
 def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
     """Evaluate the agent and optionally render the environment"""
 
-    env = gym.vector.SyncVectorEnv([make_env("Hopper-v4", 42, 0, False, render=True)])
+    env = make_env("Hopper-v4", False, render=True)
+    print(f"action_space: {env.action_space}")
+    print(f"observation_space: {env.observation_space}")
 
-    actor = Actor(env)
+    actor = Actor(env.observation_space, env.action_space)
 
     load_checkpoint(load_checkpoint_path, actor, device="cpu")
 
@@ -277,37 +270,18 @@ def train():
     torch.manual_seed(args.seed)
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [
-            make_env(
-                args.env_id,
-                args.seed + i,
-                i,
-                args.capture_video,
-                run_name,
-                render=args.render,
-            )
-            for i in range(args.num_envs)
-        ]
-    )
-    assert isinstance(
-        envs.single_action_space, gym.spaces.Box
-    ), "only continuous action space is supported"
+    env = make_env(args.env_id, args.capture_video, render=args.render)
 
-    logging.info(f"observation_space: {envs.single_observation_space}")
-    logging.info(f"action_space: {envs.single_action_space}")
+    logging.info(f"observation_space: {env.observation_space}")
+    logging.info(f"action_space: {env.action_space}")
     logging.info(f"=" * 50)
 
-    # if type(envs.single_observation_space) == gym.spaces.Dict:
-    #     observation = envs.single_observation_space["observation"]
+    actor = Actor(env.observation_space, env.action_space).to(device)
+    qf1 = SoftQNetwork(env.observation_space, env.action_space).to(device)
+    qf2 = SoftQNetwork(env.observation_space, env.action_space).to(device)
+    qf1_target = SoftQNetwork(env.observation_space, env.action_space).to(device)
+    qf2_target = SoftQNetwork(env.observation_space, env.action_space).to(device)
 
-    max_action = float(envs.single_action_space.high[0])
-
-    actor = Actor(envs).to(device)
-    qf1 = SoftQNetwork(envs).to(device)
-    qf2 = SoftQNetwork(envs).to(device)
-    qf1_target = SoftQNetwork(envs).to(device)
-    qf2_target = SoftQNetwork(envs).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     q_optimizer = optim.Adam(
@@ -318,7 +292,7 @@ def train():
     # Automatic entropy tuning
     if args.autotune:
         target_entropy = -torch.prod(
-            torch.Tensor(envs.single_action_space.shape).to(device)
+            torch.Tensor(env.action_space.shape).to(device)
         ).item()
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
@@ -327,20 +301,19 @@ def train():
     else:
         alpha = args.alpha
 
-    envs.single_observation_space.dtype = np.float32
+    env.observation_space.dtype = np.float32
     rb = ReplayBuffer(
         args.buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
+        env.observation_space,
+        env.action_space,
         device,
-        n_envs=args.num_envs,
         handle_timeout_termination=False,
     )
     start_time = time.time()
     log_buffer_full = False
 
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
+    obs, _ = env.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
 
         if global_step == args.learning_starts:
@@ -348,19 +321,17 @@ def train():
 
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            actions = np.array(
-                [envs.single_action_space.sample() for _ in range(envs.num_envs)]
-            )
+            action = np.array(env.action_space.sample())
         else:
-            actions, _, _ = actor.get_action(torch.Tensor(obs).to(device))
-            actions = actions.detach().cpu().numpy()
+            action, _, _ = actor.get_action(torch.Tensor(obs).unsqueeze(0).to(device))
+            action = action.detach().cpu().numpy().squeeze()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        next_obs, reward, termination, truncation, info = env.step(action)
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
+        # TRY NOT TO MODIFY: record reward for plotting purposes
+        if "final_info" in info:
+            for info in info["final_info"]:
                 if info is not None:
                     # logging.info(
                     #     f"global_step={global_step}, episodic_return={info['episode']['r']}"
@@ -373,12 +344,11 @@ def train():
                     )
                     break
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        # TRY NOT TO MODIFY: save data to replay buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc and "final_observation" in infos:  # Note
-                real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+        if truncation and "final_observation" in info:  # Note
+            real_next_obs = info["final_observation"]
+        rb.add(obs, real_next_obs, action, reward, termination, info)
 
         if rb.size == args.buffer_size and not log_buffer_full:
             logging.info("Replay buffer is full!")
@@ -498,7 +468,7 @@ def train():
     # Final checkpoint save
     save_checkpoint(actor, qf1, qf2, actor_optimizer, q_optimizer, global_step, args)
 
-    envs.close()
+    env.close()
     writer.close()
 
 
@@ -512,5 +482,5 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
-    # train()
+    # test()
+    train()
