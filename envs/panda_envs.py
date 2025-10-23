@@ -1,14 +1,17 @@
+import time
 import gymnasium as gym
 import panda_gym
+import os
+import sys
+
+sys.path.append(os.getcwd())
 from envs.image_wrapper import ImageObservationWrapper
 
 
-def get_env():
+def get_env(env_name="PandaPickAndPlaceDense-v3"):
     """
     https://panda-gym.readthedocs.io/en/latest/usage/environments.html
     """
-
-    env_name = "PandaPickAndPlaceDense-v3"
 
     # 创建原始环境
     env = gym.make(
@@ -28,3 +31,29 @@ def get_env():
     env = ImageObservationWrapper(env)
 
     return env
+
+
+def manual_control():
+    # env = gym.make("PandaReach-v3", render_mode="human")
+    env = get_env("PandaReach-v3")
+    print("=" * 40)
+    print("Action space:", env.action_space)
+    print("Observation space:", env.observation_space)
+    print("=" * 40)
+    observation, info = env.reset()
+
+    for _ in range(1000):
+        current_position = observation["observation"][0:3]
+        desired_position = observation["desired_goal"][0:3]
+        action = 5.0 * (desired_position - current_position)
+        observation, reward, terminated, truncated, info = env.step(action)
+        time.sleep(0.05)
+
+        if terminated or truncated:
+            observation, info = env.reset()
+
+    env.close()
+
+
+if __name__ == "__main__":
+    manual_control()
