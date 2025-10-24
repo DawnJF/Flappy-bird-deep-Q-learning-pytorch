@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.append(os.getcwd())
 from src.sac_policy.low_dimensional import Actor, SoftQNetwork
 from src.buffers import ReplayBuffer
-from src.utils import get_device, setup_logging
+from src.utils import get_device, logging_args, setup_logging
 
 
 @dataclass
@@ -35,7 +35,7 @@ class Args:
     """timestep to start learning"""
     total_timesteps: int = 100000
     """total timesteps of the experiments"""
-    save_freq: int = 30000
+    save_freq: int = 20000
     """frequency to save checkpoints"""
 
     buffer_size: int = int(1e6)
@@ -60,13 +60,15 @@ class Args:
     """automatic tuning of the entropy coefficient"""
 
 
-def make_env(env_id):
-    env = gym.make(env_id)
+def make_env(env_id, render=False):
+    env = gym.make(env_id, render_mode="human" if render else None)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     return env
 
 
-def save_checkpoint(actor, qf, actor_optimizer, q_optimizer, global_step, args):
+def save_checkpoint(
+    actor, qf, actor_optimizer, q_optimizer, global_step, args, best=False
+):
     """Save model checkpoint"""
     checkpoint_path = args.output_dir
 
@@ -76,11 +78,17 @@ def save_checkpoint(actor, qf, actor_optimizer, q_optimizer, global_step, args):
         "qf_state_dict": qf.state_dict(),
         "actor_optimizer_state_dict": actor_optimizer.state_dict(),
         "q_optimizer_state_dict": q_optimizer.state_dict(),
-        "args": args,
+        "args": args.__dict__,
     }
 
-    torch.save(checkpoint, f"{checkpoint_path}/checkpoint_{global_step}.pt")
-    print(f"Checkpoint saved at step {global_step}")
+    file_name = (
+        f"{checkpoint_path}/checkpoint_best.pt"
+        if best
+        else f"{checkpoint_path}/checkpoint_{global_step}.pt"
+    )
+
+    torch.save(checkpoint, file_name)
+    logging.info(f"Checkpoint saved at step {global_step}, to {file_name}")
 
 
 def load_checkpoint(checkpoint_path, actor, device):
@@ -99,7 +107,7 @@ def load_checkpoint(checkpoint_path, actor, device):
 def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
     """Evaluate the agent and optionally render the environment"""
 
-    env = make_env("Hopper-v4", False, render=True)
+    env = make_env("Hopper-v4", render=False)
     action_space = env.action_space
     observation_space = env.observation_space
     print(f"action_space: {action_space}")
@@ -113,6 +121,8 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
     episode_lengths = []
 
     for episode in range(num_episodes):
+        print(" " * 40)
+        print(f"Starting evaluation episode {episode + 1}/{num_episodes}")
         obs, _ = env.reset()
         episode_return = 0
         episode_length = 0
@@ -121,13 +131,10 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
         while not done and episode_length < max_steps:
             with torch.no_grad():
                 obs_tensor = torch.FloatTensor(obs).unsqueeze(0)
-                action, _, _ = actor.get_action(obs_tensor)
+                _, _, action = actor.get_action(obs_tensor)
                 action = action.cpu().numpy()[0]
 
             obs, reward, terminated, truncated, info = env.step(action)
-
-            distance = info["x_position"]
-            print(f"Step: {episode_length}, Reward: {reward}, distance: {distance}")
 
             reward_scalar = np.asarray(reward).item()
             episode_return += reward_scalar
@@ -135,7 +142,10 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
             done = terminated or truncated
 
             if done:
-                print("Episode finished after {} timesteps".format(episode_length))
+                returns = info["episode"]["r"]
+                length = info["episode"]["l"]
+                print(f"Returns: {returns:.2f}, Length: {length}")
+                print("terminated:", terminated, "truncated:", truncated)
 
             # if render:
             # eval_env.render()
@@ -143,11 +153,9 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
 
         episode_returns.append(episode_return)
         episode_lengths.append(episode_length)
-        print(
-            f"Eval Episode {episode + 1}: Return = {float(episode_return):.2f}, Length = {episode_length}"
-        )
 
     env.close()
+    print(" " * 40)
 
     avg_return = np.mean(episode_returns)
     avg_length = np.mean(episode_lengths)
@@ -161,6 +169,7 @@ def evaluate_agent(load_checkpoint_path, num_episodes=5, max_steps=4000):
 def train():
 
     args = tyro.cli(Args)
+
     time_str = time.strftime("%Y-%m-%d-%H-%M-%S")
     run_name = f"{args.env_id}__{args.exp_name}__{time_str}"
     args.output_dir = os.path.join(args.output_dir, run_name)
@@ -168,16 +177,10 @@ def train():
 
     setup_logging(args.output_dir)
 
+    logging_args(args)
     writer = SummaryWriter(args.output_dir)
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s"
-        % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
 
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-
+    torch.backends.cudnn.benchmark = True
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
@@ -193,6 +196,8 @@ def train():
 
     actor = Actor(observation_space, action_space).to(device)
     qf = SoftQNetwork(observation_space, action_space).to(device)
+    logging.info(actor)
+    logging.info(qf)
 
     qf_target = SoftQNetwork(observation_space, action_space).to(device)
     qf_target.load_state_dict(qf.state_dict())
@@ -219,6 +224,7 @@ def train():
         handle_timeout_termination=False,
     )
     start_time = time.time()
+    best_avg_return = -np.inf
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = env.reset()
@@ -241,6 +247,7 @@ def train():
         next_obs, reward, terminated, truncated, info = env.step(action_to_step)
 
         # TRY NOT TO MODIFY: record reward for plotting purposes
+        returns = 0
         if terminated or truncated:
             if "episode" in info:
                 returns = info["episode"]["r"]
@@ -261,6 +268,15 @@ def train():
             [info],
         )
 
+        # if returns > best_avg_return and global_step > args.save_freq:
+        #     best_avg_return = returns
+        #     logging.info(
+        #         f"New best average return: {best_avg_return:.2f} at step {global_step}"
+        #     )
+        #     save_checkpoint(
+        #         actor, qf, actor_optimizer, q_optimizer, global_step, args, True
+        #     )
+
         if terminated or truncated:
             obs, _ = env.reset()
         else:
@@ -269,6 +285,7 @@ def train():
         # ALGO LOGIC: training.
         if global_step < args.learning_starts:
             continue
+
         data = rb.sample(args.batch_size)
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(
@@ -294,9 +311,10 @@ def train():
         q_optimizer.step()
 
         if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
-            for _ in range(
-                args.policy_frequency
-            ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
+            # compensate for the delay by doing 'actor_update_interval' instead of 1
+            for _ in range(args.policy_frequency):
+
+                data = rb.sample(args.batch_size)
                 pi, log_pi, _ = actor.get_action(data.observations)
                 qf_pi = qf(data.observations, pi)
                 min_qf_pi = qf_pi.min(dim=1)[0]
@@ -330,8 +348,6 @@ def train():
             writer.add_scalar(
                 "charts/qf2_values", qf_a_values[:, 1].mean().item(), global_step
             )
-            writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-            writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
             writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
             writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
             writer.add_scalar("charts/alpha", alpha, global_step)
@@ -353,14 +369,7 @@ def train():
             )
         # Save checkpoint
         if global_step % args.save_freq == 0:
-            save_checkpoint(
-                actor,
-                qf,
-                actor_optimizer,
-                q_optimizer,
-                global_step,
-                args,
-            )
+            save_checkpoint(actor, qf, actor_optimizer, q_optimizer, global_step, args)
 
     # Final checkpoint save
     save_checkpoint(actor, qf, actor_optimizer, q_optimizer, global_step, args)
@@ -370,14 +379,21 @@ def train():
 
 
 def test():
-
-    load_checkpoint_path = (
-        "outputs/sac/Hopper-v4__sac__1__1757170278/checkpoint_200000.pt"
+    """
+    卧槽 双q共享可训练特征层，效果超级好！！！
+    """
+    path = (
+        "outputs/sac/Hopper-v4__sac__2025-10-24-11-55-54/checkpoint_60000.pt"  # Q共享
+    )
+    path = (
+        "outputs/sac/Hopper-v4__sac__2025-10-24-14-32-24/checkpoint_60000.pt"  # Q独立
     )
 
-    evaluate_agent(load_checkpoint_path, 1)
+    path = "outputs/sac/Hopper-v4__sac__2025-10-24-15-20-27/checkpoint_60000.pt"
+
+    evaluate_agent(path, 5)
 
 
 if __name__ == "__main__":
-    # test()
-    train()
+    test()
+    # train()

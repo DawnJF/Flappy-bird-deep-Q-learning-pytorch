@@ -10,17 +10,14 @@ class SoftQNetwork(nn.Module):
         input_dim = np.array(observation_space.shape).prod() + np.prod(
             action_space.shape
         )
+        self.net = nn.Sequential(nn.Linear(input_dim, 256), nn.ReLU())
 
         self.critic1 = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
             nn.Linear(256, 1),
         )
         self.critic2 = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
             nn.Linear(256, 256),
             nn.ReLU(),
             nn.Linear(256, 1),
@@ -28,6 +25,7 @@ class SoftQNetwork(nn.Module):
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
+        x = self.net(x)
 
         q1 = self.critic1(x)
         q2 = self.critic2(x)
