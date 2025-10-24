@@ -7,19 +7,31 @@ import torch.nn.functional as F
 class SoftQNetwork(nn.Module):
     def __init__(self, observation_space, action_space):
         super().__init__()
-        self.fc1 = nn.Linear(
-            np.array(observation_space.shape).prod() + np.prod(action_space.shape),
-            256,
+        input_dim = np.array(observation_space.shape).prod() + np.prod(
+            action_space.shape
         )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+
+        self.critic1 = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+        )
+        self.critic2 = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+        )
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+
+        q1 = self.critic1(x)
+        q2 = self.critic2(x)
+        return torch.cat([q1, q2], dim=1)
 
 
 LOG_STD_MAX = 2
@@ -69,6 +81,6 @@ class Actor(nn.Module):
         log_prob = normal.log_prob(x_t)
         # Enforcing Action Bound
         log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
-        log_prob = log_prob.sum(1, keepdim=True)
+        log_prob = log_prob.sum(1)
         mean = torch.tanh(mean) * self.action_scale + self.action_bias
         return action, log_prob, mean
