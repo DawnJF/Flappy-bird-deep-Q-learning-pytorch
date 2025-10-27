@@ -21,7 +21,7 @@ from src.utils import get_device, logging_args, setup_logging
 
 @dataclass
 class Args:
-    exp_name: str = "q_mean_adamw"
+    exp_name: str = "q_discount_999"
     """the name of this experiment"""
     output_dir: str = "outputs/sac"
     render: bool = False
@@ -33,14 +33,14 @@ class Args:
     """path to load checkpoint from"""
     learning_starts: int = 5000
     """timestep to start learning"""
-    total_timesteps: int = 200_000
+    total_timesteps: int = 100_000
     """total timesteps of the experiments"""
     save_freq: int = 40_000
     """frequency to save checkpoints"""
 
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
-    gamma: float = 0.99
+    gamma: float = 0.999
     """the discount factor gamma"""
     tau: float = 0.005
     """target smoothing coefficient (default: 0.005)"""
@@ -402,6 +402,13 @@ def test():
     )
 
     path = "outputs/sac/Hopper-v4__sac__2025-10-24-15-20-27/checkpoint_60000.pt"
+
+    """
+    结论：discount 影响巨大... 
+    0.999 会快非常多; 0.97 会差非常多，一直学的不好
+    """
+
+    path = "outputs/sac/Hopper-v4__q_discount_999__2025-10-27-16-25-52/checkpoint_120000.pt"
 
     evaluate_agent(path, 5)
 
