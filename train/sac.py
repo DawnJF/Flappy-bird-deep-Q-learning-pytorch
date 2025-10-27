@@ -21,7 +21,7 @@ from src.utils import get_device, logging_args, setup_logging
 
 @dataclass
 class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
+    exp_name: str = "q_mean_adamw"
     """the name of this experiment"""
     output_dir: str = "outputs/sac"
     render: bool = False
@@ -33,9 +33,9 @@ class Args:
     """path to load checkpoint from"""
     learning_starts: int = 5000
     """timestep to start learning"""
-    total_timesteps: int = 100000
+    total_timesteps: int = 200_000
     """total timesteps of the experiments"""
-    save_freq: int = 20000
+    save_freq: int = 40_000
     """frequency to save checkpoints"""
 
     buffer_size: int = int(1e6)
@@ -201,15 +201,15 @@ def train():
 
     qf_target = SoftQNetwork(observation_space, action_space).to(device)
     qf_target.load_state_dict(qf.state_dict())
-    q_optimizer = optim.Adam(list(qf.parameters()), lr=args.q_lr)
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr)
+    q_optimizer = optim.AdamW(list(qf.parameters()), lr=args.q_lr)
+    actor_optimizer = optim.AdamW(list(actor.parameters()), lr=args.policy_lr)
 
     # Automatic entropy tuning
     if args.autotune:
         target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(device)).item()
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
-        a_optimizer = optim.Adam([log_alpha], lr=args.q_lr)
+        a_optimizer = optim.AdamW([log_alpha], lr=args.q_lr)
         logging.info(f"Target entropy set to {target_entropy:.2f}")
     else:
         alpha = args.alpha
@@ -291,19 +291,21 @@ def train():
             next_state_actions, next_state_log_pi, _ = actor.get_action(
                 data.next_observations
             )
-            # [B, 2]
+            # [B, N]
             qf_next_target = qf_target(data.next_observations, next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=1)[0]  # [B]
+            # qf_next_target = torch.topk(qf_next_target, k=2, dim=1)[0][:, -1]
+            qf_next_target = torch.min(qf_next_target, dim=1)[0]
 
-            min_qf_next_target = min_qf_next_target - alpha * next_state_log_pi
+            qf_next_target = qf_next_target - alpha * next_state_log_pi
             next_q_value = data.rewards.flatten() + (
                 1 - data.dones.flatten()
-            ) * args.gamma * (min_qf_next_target).view(-1)
+            ) * args.gamma * (qf_next_target).view(-1)
 
         qf_a_values = qf(data.observations, data.actions)
-        qf1_loss = F.mse_loss(qf_a_values[:, 0], next_q_value)
-        qf2_loss = F.mse_loss(qf_a_values[:, 1], next_q_value)
-        qf_loss = qf1_loss + qf2_loss
+        qf_loss = (
+            F.mse_loss(qf_a_values[:, 0], next_q_value)
+            + F.mse_loss(qf_a_values[:, 1], next_q_value)
+        ) / 2.0
 
         # optimize the model
         q_optimizer.zero_grad()
@@ -314,11 +316,12 @@ def train():
             # compensate for the delay by doing 'actor_update_interval' instead of 1
             for _ in range(args.policy_frequency):
 
-                data = rb.sample(args.batch_size)
+                # data = rb.sample(args.batch_size)
                 pi, log_pi, _ = actor.get_action(data.observations)
                 qf_pi = qf(data.observations, pi)
-                min_qf_pi = qf_pi.min(dim=1)[0]
-                actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
+                qf_pi = torch.mean(qf_pi, dim=1)
+
+                actor_loss = ((alpha * log_pi) - qf_pi).mean()
 
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
@@ -348,7 +351,7 @@ def train():
             writer.add_scalar(
                 "charts/qf2_values", qf_a_values[:, 1].mean().item(), global_step
             )
-            writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
+            writer.add_scalar("losses/qf_loss", qf_loss.item(), global_step)
             writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
             writer.add_scalar("charts/alpha", alpha, global_step)
             writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
@@ -380,7 +383,16 @@ def train():
 
 def test():
     """
-    卧槽 双q共享可训练特征层，效果超级好！！！
+    双q共享可训练特征层，前期效果好，因为"容易高估"，但后期不够稳定
+    独立Q 后期更稳定，但是更慢，整体来看 训练更稳定
+
+    AdamW 更好
+
+    每次loss sample data 好像影响不大
+
+    actor 用 mean 收敛快
+
+    结论：AdamW + actor mean q + （独立双Q）
     """
     path = (
         "outputs/sac/Hopper-v4__sac__2025-10-24-11-55-54/checkpoint_60000.pt"  # Q共享
@@ -395,5 +407,5 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
-    # train()
+    # test()
+    train()
