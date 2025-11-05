@@ -46,11 +46,17 @@ def manual_control():
         current_position = observation["observation"][0:3]
         desired_position = observation["desired_goal"][0:3]
         action = 5.0 * (desired_position - current_position)
+        print("-" * 40)
+        print("Current position:", current_position)
+        print("Desired position:", desired_position)
+        print("Action:", action)
+
         observation, reward, terminated, truncated, info = env.step(action)
-        time.sleep(0.05)
+        time.sleep(0.5)
 
         if terminated or truncated:
             observation, info = env.reset()
+            break
 
     env.close()
 
