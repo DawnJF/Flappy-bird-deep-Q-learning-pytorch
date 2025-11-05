@@ -25,14 +25,15 @@ class Args:
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
 
-    save_model: bool = False
+    save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
 
     hf_entity: str = ""
     """the user or org name of the model repository from the Hugging Face Hub"""
 
     # Algorithm specific arguments
-    env_id: str = "HalfCheetah-v4"
+    # env_id: str = "HalfCheetah-v4"
+    env_id: str = "Hopper-v4"
     """the id of the environment"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -147,8 +148,12 @@ class Agent(nn.Module):
             self.critic(x),
         )
 
+    def act(self, x):
+        action_mean = self.actor_mean(torch.Tensor(x))
+        return action_mean.detach().cpu().numpy()
 
-if __name__ == "__main__":
+
+def train():
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -359,3 +364,34 @@ if __name__ == "__main__":
 
     envs.close()
     writer.close()
+
+
+def eval():
+    path = "runs/HalfCheetah-v4__ppo__1__1762329773/ppo.cleanrl_model"
+
+    args = Args()
+
+    envs = gym.vector.SyncVectorEnv(
+        [
+            make_env(args.env_id, i, args.gamma, render=True)
+            for i in range(args.num_envs)
+        ]
+    )
+
+    agent = Agent(envs)
+    agent.load_state_dict(torch.load(path))
+    agent.eval()
+
+    obs, _ = envs.reset()
+
+    while True:
+        action = agent.act(obs)
+        time.sleep(0.04)
+        obs, reward, terminations, truncations, infos = envs.step(action)
+        if terminations[0] or truncations[0]:
+            obs, _ = envs.reset()
+
+
+if __name__ == "__main__":
+    train()
+    # eval()
