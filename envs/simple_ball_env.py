@@ -107,6 +107,39 @@ class BallEnv(gym.Env):
             pygame.quit()
 
 
+class KeyboradIntervention(gym.ActionWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step(self, o_action):
+        # 事件处理
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
+                exit()
+
+        action = o_action.copy()
+
+        keys = pygame.key.get_pressed()
+        intervened = True
+        if keys[pygame.K_UP]:
+            action[0] = -1
+        if keys[pygame.K_DOWN]:
+            action[0] = 1
+        if keys[pygame.K_LEFT]:
+            action[1] = -1
+        if keys[pygame.K_RIGHT]:
+            action[1] = 1
+        else:
+            intervened = False
+
+        observation, reward, done, truncated, info = self.env.step(action)
+        info["keyboard_intervention"] = intervened
+        if intervened:
+            info["original_action"] = o_action
+        return observation, reward, done, truncated, info
+
+
 def test():
     env = BallEnv(render_mode="human")
     obs, _ = env.reset()
@@ -159,5 +192,26 @@ def test_keyborad():
             obs, _ = env.reset()
 
 
+def test_keyborad_wrapper():
+    env = BallEnv(render_mode="human")
+    env = KeyboradIntervention(env)
+
+    print(f"obs: {env.observation_space}")
+    print(f"action: {env.action_space}")
+
+    obs, _ = env.reset()
+
+    done = False
+
+    while True:
+        action = np.random.uniform(-1, 1, size=(2,))
+        obs, reward, done, _, info = env.step(action)
+        env.render()
+
+        if done:
+            print("到达目标！奖励:", reward)
+            obs, _ = env.reset()
+
+
 if __name__ == "__main__":
-    test_keyborad()
+    test_keyborad_wrapper()
